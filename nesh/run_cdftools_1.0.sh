@@ -4,9 +4,9 @@ set -ex
 typeset -Z4 yr1 yr2 yr 
 typeset -Z2 mm dd
 #
-CDO=$HOME/bin/cdo
+CDO=/sfs/fs6/home-geomar/smomw014/bin/cdo
 cdr=~smomw014/prg/CDFTOOLS_3.0/bin
-varlist="moc psi mhst"
+varlist="moc psi mhst bottom"
 mmlist="01 02 03 04 05 06 07 08 09 10 11 12"
 set -A dd_month 00 31 28 31 30 31 30 31 31 30 31 30 31
 #
@@ -80,9 +80,16 @@ for var in ${varlist} ; do
   fi
 
 cp -p ~smomw014/prg/CDFTOOLS_3.0/namelist/nam_cdf_names_kcm nam_cdf_names_kcm
+if [ $res = 'orca05' ] ; then
 sed -e "s/CN_FBASINS      = orca2_subbasins.nc/CN_FBASINS      = ${res}_subbasins.nc/" \
-     nam_cdf_names_kcm > nam_cdf_names_${res}
-#    -e "s/CN_T    = time/CN_T    = time_counter/" \
+    -e "s/CN_T    = time/CN_T    = time_counter/" \
+    -e "s/CN_VTIMEC       = time/CN_VTIMEC       = time_counter/" \
+    nam_cdf_names_kcm > nam_cdf_names_${res}
+else
+sed -e "s/CN_FBASINS      = orca2_subbasins.nc/CN_FBASINS      = ${res}_subbasins.nc/" \
+    nam_cdf_names_kcm > nam_cdf_names_${res}
+fi
+
 
 case ${var} in
   moc)
@@ -97,7 +104,6 @@ case ${var} in
   ;;
   psi)
      if [ ! -f save/${inid}.${var}.nc ] ; then
-       cp -p ~smomw014/prg/CDFTOOLS_3.0/namelist/nam_cdf_names_kcm nam_cdf_names_kcm
        sed -e "s/CN_Z    = depthv/CN_Z    = depthu/" \
            -e "s/CN_VDEPTHV      = depthv/CN_VDEPTHV      = depthu/" \
            nam_cdf_names_${res} > nam_cdf_names
@@ -113,7 +119,6 @@ case ${var} in
   ;;
   mhst)
      if [ ! -f save/${inid}.${var}.nc ] ; then
-       cp -p ~smomw014/prg/CDFTOOLS_3.0/namelist/nam_cdf_names_kcm nam_cdf_names_kcm
        sed -e "s/CN_Z    = depthv/CN_Z    = deptht/" \
            -e "s/CN_VDEPTHV      = depthv/CN_VDEPTHV      = deptht/" \
            nam_cdf_names_${res} > nam_cdf_names
@@ -127,6 +132,21 @@ case ${var} in
        ${cdr}/cdf${var} vt.nc
        mv mhst.nc ${inid}.${var}.nc
        rm vt.nc
+     fi
+  ;;
+  bottom)
+     if [ ! -f save/${inid}.${var}.nc ] ; then
+       sed -e "s/CN_Z    = depthv/CN_Z    = deptht/" \
+           -e "s/CN_VDEPTHV      = depthv/CN_VDEPTHV      = deptht/" \
+           nam_cdf_names_${res} > nam_cdf_names
+       if [ ! -f ${inid}_grid_T.nc ]; then
+         nccopy -k 1 ${idr}/${inid}_grid_T.nc ${inid}_grid_T.nc
+       fi  
+       ${cdr}/cdf${var} ${inid}_grid_T.nc
+       mv bottom.nc ${inid}.${var}.nc
+       ${cdr}/cdf${var}sig ${inid}_grid_T.nc
+       ncks -A -v sobotsig0 botsig.nc ${inid}.${var}.nc
+       rm -f botsig.nc
      fi
   ;;
   *) echo "error: check cdftools functions"
@@ -160,10 +180,12 @@ echo '=== SUCCESSFUL END ==='
 
 }
 
-#happy P15 0800 0886 EXP2 $WORK ym orca2
-#happy P16 0800 1005 EXP2 $WORK ym orca2
-#happy P17 0800 0999 EXP2 $WORK ym orca2
-#happy P19 0002 0049 EXP2 $WORK 1m orca05
-#happy P20 0030 0049 EXP2 $WORK 1m orca05
-#happy P21 0002 0019 EXP2 $WORK 1m orca05
-happy P22 0002 0019 EXP2 $WORK 1m orca05
+#happy P15 0800 0886 EXP2 /sfs/fs2/work-geomar4/smomw014 ym orca2
+#happy P16 0800 1005 EXP2 /sfs/fs2/work-geomar4/smomw014 ym orca2
+happy P17 0800 0999 EXP2 /sfs/fs2/work-geomar4/smomw014 ym orca2
+#happy P19 0002 0049 EXP2 /sfs/fs2/work-geomar4/smomw014 1m orca05
+#happy P20 0030 0049 EXP2 /sfs/fs2/work-geomar4/smomw014 1m orca05
+#happy P21 0002 0019 EXP2 /sfs/fs2/work-geomar4/smomw014 1m orca05
+#happy P22 0002 0019 EXP2 /sfs/fs2/work-geomar4/smomw014 1m orca05
+#happy P18 0002 0019 EXP2 /sfs/fs2/work-geomar4/smomw014 1m orca05
+#happy P14 0002 0019 EXP2 /sfs/fs2/work-geomar4/smomw014 ym orca2
