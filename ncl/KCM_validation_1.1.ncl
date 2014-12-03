@@ -6,20 +6,26 @@
 ;
 ; 
 ; History:      
-;           1.0  :  Nov. 2014  :  annual mean time series         :  S.Steinig
-;           1.1  :  Dez. 2014  :  added monthly mean time series  :  S.Steinig
+;           1.0  :  Nov. 2014  :  annual mean time series         :  S. Steinig
+;           1.1  :  Dez. 2014  :  added monthly mean time series  :  S. Steinig
 ;*****************************************************************************************
 
-
-
-begin
-
 ;*****************************************************************************************
-; Load data
+; User input
 ;*****************************************************************************************
 
-; define function to find closest value
+; specify directory
+dir = "/Users/ssteinig/Documents/Uni/Master/HiWi/KCM"
+delta_t="ym" ; ym or 1m
+exp_list=(/"P18","P19","P20","P21"/)
+var_list=(/"moc"/)
+;exp_list=(/"P15","P16","P17"/)
 
+;*****************************************************************************************
+; Define own functions
+;*****************************************************************************************
+
+; Find closest value
 function closest_val_AnyOrder(xVal[1]:numeric, x:numeric)
 local xAbsDif, xMinVal, iClose
 begin
@@ -28,57 +34,40 @@ begin
   return(iClose)   ; original doc says "first occurence"
 end
 
+; Extract a substring from another string
+function substring (instr[1]:string, first[1]:numeric, last[1]:numeric)
+local instr, first, last, main, p2
+begin
+   main = stringtochar (instr)		; convert input string to char array
+					                ; terminal null character is included    
+   if (last .ge. first) then		; check requested end position
+      p2 = last				        ; go to last position specified
+   else					            ; but if less than first:
+      p2 = dimsizes (main) - 2		; go to last avail char in main string
+   end if   
+   return (chartostring (main(first:p2)))	; extract substring
+end
 
-; specify directory
-dir = "/Users/ssteinig/Documents/Uni/Master/HiWi/KCM"
+begin
 
-exp_list=(/"P18","P19","P20","P21"/)
-;exp_list=(/"P14","P15","P16","P17"/)
-
+;*****************************************************************************************
+; Load data
+;*****************************************************************************************
 
 ; detect length of time series for array initialisation
-first_year=9999
-last_year=0
+
+model_years=new((/dimsizes(exp_list),2/),"integer")
 do nn=0,dimsizes(exp_list)-1
-    f=systemfunc ("ls "+dir+"/data/"+exp_list(nn)+"/"+exp_list(nn)+"_ym*moc*.nc")
-    file_tmp=addfile(f,"r")
-    moc=file_tmp->zomsfglo(:,:,:,0)
-    
-    ; get time information
-    if ( isfilevarcoord( file_tmp, "time_counter", "time_counter") .eq. True ) then
-        time_axis=file_tmp->time_counter
-        time_axis!0="time"
-    else
-        time_axis=file_tmp->time
-    end if   
-    time_new=cd_calendar(time_axis,-5)
-    
-    if (exp_list(nn) .eq. "P15") then
-        years=ispan(799,886,1)
-    else if (exp_list(nn) .eq. "P16") then
-        years=ispan(799,1005,1)
-    else if (exp_list(nn) .eq. "P17") then
-        years=ispan(799,999,1)
-    else
-        years=time_new(:,0)
-    end if
-    end if 
-    end if
-
-    length=dimsizes(years)
-
-    if (years(0) .lt. first_year) then
-        first_year=years(0)
-    end if
-    
-    if (years(length-1) .gt. last_year) then
-        last_year=years(length-1)
-    end if
-    delete([/f,file_tmp,moc,time_axis,time_new,years,length/])
+    f=systemfunc ("ls "+dir+"/data/"+exp_list(nn)+"/"+exp_list(nn)+"_"+delta_t+"*"+var_list(0)+"*.nc")
+    i1  = str_index_of_substr(f, var_list(0), 1)
+    model_years(nn,0)=stringtointeger(substring(f,i1-10,i1-7))
+    model_years(nn,1)=stringtointeger(substring(f,i1-5,i1-2))
+    delete([/f/])
 end do
 
+first_year=dim_min(model_years(:,0))
+last_year=dim_max(model_years(:,1))
 time_range=ispan(first_year,last_year,1)
-
 
 ;*****************************************************************************************
 ; MOC
@@ -89,7 +78,7 @@ AMOC_30S=new((/dimsizes(exp_list),dimsizes(time_range)/),"float")
 STC=new((/dimsizes(exp_list),dimsizes(time_range)/),"float")
 
 do nn=0,dimsizes(exp_list)-1
-    f=systemfunc ("ls "+dir+"/data/"+exp_list(nn)+"/"+exp_list(nn)+"_ym*moc*.nc")
+    f=systemfunc ("ls "+dir+"/data/"+exp_list(nn)+"/"+exp_list(nn)+"_"+delta_t+"*moc*.nc")
     file_tmp=addfile(f,"r")
     moc=file_tmp->zomsfatl(:,:,:,0)
     stc=file_tmp->zomsfinp(:,:,:,0)
@@ -151,7 +140,7 @@ ACC=new((/dimsizes(exp_list),dimsizes(time_range)/),"float")
 IT=new((/dimsizes(exp_list),dimsizes(time_range)/),"float")
 
 do nn=0,dimsizes(exp_list)-1
-    f=systemfunc ("ls "+dir+"/data/"+exp_list(nn)+"/"+exp_list(nn)+"_ym*psi*.nc")
+    f=systemfunc ("ls "+dir+"/data/"+exp_list(nn)+"/"+exp_list(nn)+"_"+delta_t+"*psi*.nc")
     file_tmp=addfile(f,"r")
     psi_tmp=file_tmp->sobarstf
     psi=psi_tmp/1000000
@@ -221,7 +210,7 @@ DSOW_S=new((/dimsizes(exp_list),dimsizes(time_range)/),"float")
 DSOW_sig=new((/dimsizes(exp_list),dimsizes(time_range)/),"float")
 
 do nn=0,dimsizes(exp_list)-1
-    f=systemfunc ("ls "+dir+"/data/"+exp_list(nn)+"/"+exp_list(nn)+"_ym*bottom*.nc")
+    f=systemfunc ("ls "+dir+"/data/"+exp_list(nn)+"/"+exp_list(nn)+"_"+delta_t+"*bottom*.nc")
     file_tmp=addfile(f,"r")
     temp=file_tmp->votemper
     sal=file_tmp->vosaline
@@ -312,7 +301,7 @@ res@xyExplicitLegendLabels = " "+exp_list         ; explicit labels
 items                      = ispan(0,dimsizes(exp_list)-1,1)
 res@lgItemOrder            = items(::-1)              ; reverse legend
 
-wks                                 = gsn_open_wks("pdf" ,dir+"/plots/KCM_validation") 
+wks                                 = gsn_open_wks("pdf" ,dir+"/plots/KCM_validation_"+delta_t) 
 ;wks                                 = gsn_open_wks("pdf" ,dir+"/plots/KCM_validation_orca05") 
 
 plot                               = new(9,graphic)
