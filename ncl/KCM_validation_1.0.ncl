@@ -1,6 +1,15 @@
-;***************************************************************************************** 
-load "$NCARG_ROOT/lib/ncarg/nclscripts/csm/shea_util.ncl"  
 ;*****************************************************************************************
+;                                       KCM Validation
+;*****************************************************************************************
+;
+; Calculate and plot basic transport quantities for KCM ORCA2 and ORCA05 experiments
+;
+; 
+; History:      
+;           1.0  :  Nov. 2014  :  annual mean time series  :  S.Steinig
+;*****************************************************************************************
+
+
 
 begin
 
@@ -19,8 +28,8 @@ begin
 end
 
 
-; detect directory
-dir = systemfunc("pwd")
+; specify directory
+dir = "/Users/ssteinig/Documents/Uni/Master/HiWi/KCM"
 
 exp_list=(/"P18","P19","P20","P21"/)
 ;exp_list=(/"P14","P15","P16","P17"/)
@@ -30,7 +39,7 @@ exp_list=(/"P18","P19","P20","P21"/)
 first_year=9999
 last_year=0
 do nn=0,dimsizes(exp_list)-1
-    f=systemfunc ("ls "+dir+"/data/"+exp_list(nn)+"/"+exp_list(nn)+"_1m*moc*.nc")
+    f=systemfunc ("ls "+dir+"/data/"+exp_list(nn)+"/"+exp_list(nn)+"_ym*moc*.nc")
     file_tmp=addfile(f,"r")
     moc=file_tmp->zomsfglo(:,:,:,0)
     
@@ -121,7 +130,6 @@ do nn=0,dimsizes(exp_list)-1
     index_8S=closest_val_AnyOrder(-8,lat)
     index_12S=closest_val_AnyOrder(-12,lat)
     depth_index_stc=closest_val_AnyOrder(-300,depth)
-    print(depth(depth_index_stc))
     ;find maximum of moc in vertical at chosen latitude and write to corresponding year
     AMOC_26_5N(nn,years(0)-2:years(0+yy-1)-2)=dim_max_n(moc(:,:,index_26_5N),1) 
     AMOC_30S(nn,years(0)-2:years(0+yy-1)-2)=dim_max_n(moc(:,:,index_30S),1)
@@ -282,7 +290,7 @@ res@xyDashPattern                  = 0
 
 res@trXMaxF                        = first_year 
 ;res@trXMinF                        = 800      
-res@trXMaxF                        = last_year*12 
+res@trXMaxF                        = last_year 
 res@xyLineThicknessF               = 4.0 
 res@tiYAxisString                  = "Sv"
 res@tiXAxisString                  = "Model Year"
@@ -303,7 +311,7 @@ res@xyExplicitLegendLabels = " "+exp_list         ; explicit labels
 items                      = ispan(0,dimsizes(exp_list)-1,1)
 res@lgItemOrder            = items(::-1)              ; reverse legend
 
-wks                                 = gsn_open_wks("pdf" ,dir+"/plots/KCM_validation_mm") 
+wks                                 = gsn_open_wks("pdf" ,dir+"/plots/KCM_validation") 
 ;wks                                 = gsn_open_wks("pdf" ,dir+"/plots/KCM_validation_orca05") 
 
 plot                               = new(9,graphic)
