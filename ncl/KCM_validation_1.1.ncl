@@ -7,7 +7,7 @@
 ; 
 ; History:      
 ;           1.0  :  Nov. 2014  :  annual mean time series         :  S. Steinig
-;           1.1  :  Dez. 2014  :  added monthly mean time series  :  S. Steinig
+;           1.1  :  Dez. 2014  :  added choice between ym and 1m  :  S. Steinig
 ;*****************************************************************************************
 
 ;*****************************************************************************************
@@ -18,7 +18,7 @@
 dir = "/Users/ssteinig/Documents/Uni/Master/HiWi/KCM"
 delta_t="ym" ; ym or 1m
 exp_list=(/"P18","P19","P20","P21"/)
-var_list=(/"moc"/)
+var_list=(/"moc"/) ; moc, psi, mhst, bottom 
 ;exp_list=(/"P15","P16","P17"/)
 
 ;*****************************************************************************************
@@ -29,9 +29,9 @@ var_list=(/"moc"/)
 function closest_val_AnyOrder(xVal[1]:numeric, x:numeric)
 local xAbsDif, xMinVal, iClose
 begin
-  xAbsDif = abs(xVal-x)
-  iClose  = minind(xAbsDif)
-  return(iClose)   ; original doc says "first occurence"
+    xAbsDif = abs(xVal-x)
+    iClose  = minind(xAbsDif)
+    return(iClose)   ; original doc says "first occurence"
 end
 
 ; Extract a substring from another string
@@ -51,11 +51,60 @@ end
 begin
 
 ;*****************************************************************************************
+; Set parameters
+;*****************************************************************************************
+
+load_moc            =   0
+load_psi            =   0
+load_mhst           =   0
+load_bottom         =   0
+
+; define which plots and data are needed based on the user selection of "var_list" 
+plot_time_series    =   0
+plot_overturning    =   0
+do nn=0,dimsizes(var_list)-1
+    if (var_list(nn) .eq. "moc") then
+      load_moc          =   1	
+      plot_time_series  =   1	
+      plot_overtuning   =   1			     
+    else if (var_list(nn) .eq. "psi") then
+      load_psi          =   1					            
+      plot_time_series  =   1
+    end if
+    end if
+end do   
+
+; detect horizontal grid size
+do nn=0,dimsizes(exp_list)-1
+    f=systemfunc ("ls "+dir+"/data/"+exp_list(nn)+"/"+exp_list(nn)+"_"+delta_t+"*"+var_list(0)+"*.nc")
+    file_tmp=addfile(f,"r")
+    lat=file_tmp->nav_lat(:,0)
+    if (nn .eq. 0) then ; set grid configuration based on number of latitude indices
+        if (dimsizes(lat) .eq. 511) then
+            grid="ORCA05"
+        else if (dimsizes(lat) .eq. 149) then
+            grid="ORCA2"
+        end if
+        end if
+    else ; check whether all following experiments have same grid, otherwise stop script with error
+        if (dimsizes(lat) .eq. 511 .and. grid .eq. "ORCA05") then
+            grid="ORCA05"
+        else if (dimsizes(lat) .eq. 149 .and. grid .eq. "ORCA2") then
+            grid="ORCA2"
+        else
+            print ("ERROR: Experiments do not have same grid sizes!")
+            exit
+        end if
+        end if
+    end if
+    delete([/f,file_tmp,lat/])
+end do
+    
+;*****************************************************************************************
 ; Load data
 ;*****************************************************************************************
 
 ; detect length of time series for array initialisation
-
 model_years=new((/dimsizes(exp_list),2/),"integer")
 do nn=0,dimsizes(exp_list)-1
     f=systemfunc ("ls "+dir+"/data/"+exp_list(nn)+"/"+exp_list(nn)+"_"+delta_t+"*"+var_list(0)+"*.nc")
@@ -67,71 +116,85 @@ end do
 
 first_year=dim_min(model_years(:,0))
 last_year=dim_max(model_years(:,1))
-time_range=ispan(first_year,last_year,1)
+
+if (delta_t .eq. "ym") then		
+    time_range=ispan(first_year,last_year,1)
+else					        
+    time_range=ispan(first_year*12-11,last_year*12,1)
+end if   
 
 ;*****************************************************************************************
 ; MOC
+;*****************************************************************************************
 
-; create array and load in data
-AMOC_26_5N=new((/dimsizes(exp_list),dimsizes(time_range)/),"float")
-AMOC_30S=new((/dimsizes(exp_list),dimsizes(time_range)/),"float")
-STC=new((/dimsizes(exp_list),dimsizes(time_range)/),"float")
+if (load_moc .eq. 1) then
 
-do nn=0,dimsizes(exp_list)-1
-    f=systemfunc ("ls "+dir+"/data/"+exp_list(nn)+"/"+exp_list(nn)+"_"+delta_t+"*moc*.nc")
-    file_tmp=addfile(f,"r")
-    moc=file_tmp->zomsfatl(:,:,:,0)
-    stc=file_tmp->zomsfinp(:,:,:,0)
+   ; create array and load in data
+    AMOC_26N=new((/dimsizes(exp_list),dimsizes(time_range)/),"float")
+    AMOC_30S=new((/dimsizes(exp_list),dimsizes(time_range)/),"float")
+    TC_PAC=new((/dimsizes(exp_list),dimsizes(time_range)/),"float")
+    STC_PAC=new((/dimsizes(exp_list),dimsizes(time_range)/),"float")
 
-    ; get time information
-    if ( isfilevarcoord( file_tmp, "time_counter", "time_counter") .eq. True ) then
-        time_axis=file_tmp->time_counter
-        time_axis!0="time"
-    else
-        time_axis=file_tmp->time
-    end if   
-    time_new=cd_calendar(time_axis,-5)
-    if (exp_list(nn) .eq. "P15") then
-        years=ispan(800,886,1)
-    else if (exp_list(nn) .eq. "P16") then
-        years=ispan(800,1005,1)
-    else if (exp_list(nn) .eq. "P17") then
-        years=ispan(800,999,1)
-    else
-        years=time_new(:,0)
+    ; Define lat and depth indices for moc calculations
+    ;
+    ; ORCA05
+    ;   AMOC 26.5°N: j=305
+    ;   AMOC 30°S: j=187
+    ;   TC: max (5S-5N, upper 250m) - min(5S-5N, upper 250m)
+    ;       TC_PAC: j=240:260, z=1:16
+    ;   STC: max (10N-30N, upper 250m) - min(30S-10S, upper 250m)
+    ;       STC_NPAC: j=270:313, z=1:16
+    ;       STC_SPAC: j=187:230, z=1:16
+    ;       STC_PAC: STC_NPAC - STC_SPAC
+    
+    ; ORCA2
+    ;   AMOC 26.5°N: j=95
+    ;   AMOC 30°S: j=50
+    ;   TC: max (5S-5N, upper 250m) - min(5S-5N, upper 250m)
+    ;       TC_PAC: j=65:83, z=1:18
+    ;   STC: max (10N-30N, upper 250m) - min(30S-10S, upper 250m)
+    ;       STC_NPAC: j=86:97, z=1:18
+    ;       STC_SPAC: j=50:61, z=1:18
+    ;       STC_PAC: STC_NPAC - STC_SPAC
+
+    ; NCL array indexing starts at 0!
+    if (grid .eq. "ORCA05") then
+        index_26N       =   304
+        index_30S       =   186
+        index_5S        =   239
+        index_5N        =   259
+        index_10S       =   229
+        index_10N       =   269
+        index_30N       =   312
+        index_depth_moc =   15
+    else if (grid .eq. "ORCA2") then    
+        index_26N       =   94
+        index_30S       =   49
+        index_5S        =   64
+        index_5N        =   82
+        index_10S       =   60
+        index_10N       =   85
+        index_30N       =   96
+        index_depth_moc =   17  
+    end if          
     end if
-    end if 
-    end if
-    yy=dimsizes(years)
 
-    ;attach latitude coordinate
-    lat=file_tmp->nav_lat(:,0)
-    depth=file_tmp->depthw
+    do nn=0,dimsizes(exp_list)-1
+        f=systemfunc ("ls "+dir+"/data/"+exp_list(nn)+"/"+exp_list(nn)+"_"+delta_t+"*moc*.nc")
+        file_tmp=addfile(f,"r")
+        moc_atl=file_tmp->zomsfatl(:,:,:,0)
+        moc_inp=file_tmp->zomsfinp(:,:,:,0)
+        
+        AMOC_26N(nn,(model_years(nn,0)-first_year):(model_years(nn,1)-first_year))=dim_max_n(moc_atl(:,:,index_26N),1) 
+        AMOC_30S(nn,(model_years(nn,0)-first_year):(model_years(nn,1)-first_year))=dim_max_n(moc_atl(:,:,index_30S),1) 
+        STC_NPAC=dim_max_n(moc_inp(:,0:index_depth_moc,index_10N:index_30N),1)
+        STC_SPAC=dim_min_n(moc_inp(:,0:index_depth_moc,index_10S:index_30S),1)
+        STC_PAC(nn,(model_years(nn,0)-first_year):(model_years(nn,1)-first_year))=dim_max_n(STC_NPAC,1)-dim_min_n(STC_SPAC,1)
+                
+    delete([/f,file_tmp,moc_atl,moc_inp,STC_NPAC,STC_SPAC/])
+    end do
 
-    ;printVarSummary(stc)
-    moc!2="latitude"
-    stc!2="latitude"
-    moc&latitude=lat
-    stc&latitude=lat
-    index_26_5N=closest_val_AnyOrder(26.5,lat) ;find indices of latitudes closest to chosen
-    index_30S=closest_val_AnyOrder(-30,lat)
-    index_8N=closest_val_AnyOrder(8,lat)
-    index_12N=closest_val_AnyOrder(12,lat)
-    index_8S=closest_val_AnyOrder(-8,lat)
-    index_12S=closest_val_AnyOrder(-12,lat)
-    depth_index_stc=closest_val_AnyOrder(-300,depth)
-    ;find maximum of moc in vertical at chosen latitude and write to corresponding year
-    AMOC_26_5N(nn,years(0)-2:years(0+yy-1)-2)=dim_max_n(moc(:,:,index_26_5N),1) 
-    AMOC_30S(nn,years(0)-2:years(0+yy-1)-2)=dim_max_n(moc(:,:,index_30S),1)
-    STC_north=dim_max_n(moc(:,0:depth_index_stc,index_8N:index_12N),1)
-    STC_south=dim_min_n(moc(:,0:depth_index_stc,index_8S:index_12S),1)
-    ;STC(nn,years(0)-2:years(0+yy-1)-2)=dim_max_n(STC_north,1)-dim_max_n(STC_south,1)
-    STC(nn,years(0)-2:years(0+yy-1)-2)=dim_max_n(STC_north,1)
-
-    delete([/f,file_tmp,moc,depth,depth_index_stc,stc,STC_north,STC_south,lat,time_axis,time_new,years,yy,index_26_5N,index_30S/])
-end do
-
-
+end if
 ;*****************************************************************************************
 ; Transports
 
@@ -306,18 +369,18 @@ wks                                 = gsn_open_wks("pdf" ,dir+"/plots/KCM_valida
 
 plot                               = new(9,graphic)
 
-res@trYMinF                        = min(AMOC_26_5N)-(max(AMOC_26_5N)-min(AMOC_26_5N))*0.1     
-res@trYMaxF                        = max(AMOC_26_5N)+(max(AMOC_26_5N)-min(AMOC_26_5N))*0.1  
+res@trYMinF                        = min(AMOC_26N)-(max(AMOC_26N)-min(AMOC_26N))*0.1     
+res@trYMaxF                        = max(AMOC_26N)+(max(AMOC_26N)-min(AMOC_26N))*0.1  
 res@tiMainString                  = "AMOC 26.5N"
-plot(0)                            = gsn_csm_xy (wks,time_range,AMOC_26_5N,res)
+plot(0)                            = gsn_csm_xy (wks,time_range,AMOC_26N,res)
 res@trYMinF                        = min(AMOC_30S)-(max(AMOC_30S)-min(AMOC_30S))*0.1 
 res@trYMaxF                        = max(AMOC_30S)+(max(AMOC_30S)-min(AMOC_30S))*0.1
 res@tiMainString                  = "AMOC 30S"
 plot(3)                            = gsn_csm_xy (wks,time_range,AMOC_30S,res) 
-res@trYMinF                        = min(STC)-(max(STC)-min(STC))*0.1 
-res@trYMaxF                        = max(STC)+(max(STC)-min(STC))*0.1
-res@tiMainString                  = "STC strength IndPac(max(8-12N) upper 300m)"
-plot(6)                            = gsn_csm_xy (wks,time_range,STC,res)
+res@trYMinF                        = min(STC_PAC)-(max(STC_PAC)-min(STC_PAC))*0.1 
+res@trYMaxF                        = max(STC_PAC)+(max(STC_PAC)-min(STC_PAC))*0.1
+res@tiMainString                  = "STC strength IndPac(max(10-30N)-min(10-30S) upper 250m)"
+plot(6)                            = gsn_csm_xy (wks,time_range,STC_PAC,res)
 
 res@tiMainString                  = "ACC"
 res@trYMinF                        = min(ACC)-(max(ACC)-min(ACC))*0.1     
