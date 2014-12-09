@@ -16,12 +16,14 @@
 
 ; specify directory
 dir = "/Users/ssteinig/Documents/Uni/Master/HiWi/KCM"
-delta_t="1m" ; ym or 1m
-plot_running_avg = 1
-running_avg_window = 1 ; number of years to include in the running mean
+
 exp_list=(/"P18","P19","P20","P21"/)
-var_list=(/"moc"/) ; moc, psi, mhst, bottom 
 ;exp_list=(/"P15","P16","P17"/)
+var_list=(/"moc"/) ; moc, psi, mhst, bottom 
+
+delta_t="1m" ; ym or 1m
+plot_running_avg = 1 ; 0=no, 1=yes
+running_avg_window = 1 ; number of years to include in the running mean
 
 ;*****************************************************************************************
 ; Define own functions
@@ -222,11 +224,14 @@ if (load_moc .eq. 1) then
 
         AMOC_26N(nn,model_timesteps(nn,0):model_timesteps(nn,1))=dim_max_n(moc_atl(:,:,index_26N),1) 
         AMOC_30S(nn,model_timesteps(nn,0):model_timesteps(nn,1))=dim_max_n(moc_atl(:,:,index_30S),1) 
+        TC_max=dim_max_n(moc_inp(:,0:index_depth_moc,index_5N:index_5S),1)
+        TC_min=dim_min_n(moc_inp(:,0:index_depth_moc,index_5N:index_5S),1)
+        TC_PAC(nn,model_timesteps(nn,0):model_timesteps(nn,1))=dim_max_n(TC_max,1)-dim_min_n(TC_min,1)        
         STC_NPAC=dim_max_n(moc_inp(:,0:index_depth_moc,index_10N:index_30N),1)
         STC_SPAC=dim_min_n(moc_inp(:,0:index_depth_moc,index_10S:index_30S),1)
         STC_PAC(nn,model_timesteps(nn,0):model_timesteps(nn,1))=dim_max_n(STC_NPAC,1)-dim_min_n(STC_SPAC,1)
                 
-    delete([/f,file_tmp,moc_atl,moc_atl_tmp,moc_inp,moc_inp_tmp,STC_NPAC,STC_SPAC/])
+    delete([/f,file_tmp,moc_atl,moc_atl_tmp,moc_inp,moc_inp_tmp,STC_NPAC,STC_SPAC,TC_max,TC_min/])
     end do
 
 end if
@@ -376,6 +381,9 @@ end if
 ; Plots
 ;*****************************************************************************************
 
+;*****************************************************************************************
+; MOC
+
 colors=(/"black","dodgerblue4","firebrick4","olivedrab4","purple4","darkorange4","yellow","violetred4"/)
 
 res_time_series                                = True
@@ -385,8 +393,12 @@ res_time_series@gsnFrame                       = False
 res_time_series@xyDashPattern                  = 0
 
 res_time_series@trXMaxF                        = time_range(length_time-1) 
-res_time_series@trXMinF                        = time_range(0)     
-res_time_series@xyLineThicknessF               = 300/int2flt(length_time) ; adapt line thickness to number of plotted time steps
+res_time_series@trXMinF                        = time_range(0)  
+line_thickness                                 = 300/int2flt(length_time) ; adapt line thickness to number of plotted time steps
+if (line_thickness .ge. 4) then ; limit line thickness
+    line_thickness = 4
+end if
+res_time_series@xyLineThicknessF               = line_thickness
 res_time_series@tiYAxisString                  = "Sv"
 res_time_series@tiXAxisString                  = "Model Year"
 
@@ -421,8 +433,8 @@ res_time_series@lgItemOrder            = legend_items(::-1)              ; rever
 wks                                 = gsn_open_wks("pdf" ,dir+"/plots/KCM_validation_"+grid+"_"+delta_t) 
 ;wks                                 = gsn_open_wks("pdf" ,dir+"/plots/KCM_validation_orca05") 
 
-plot_moc                               = new(9,graphic)
-plot_running_mean                      = new(9,graphic)
+plot_moc                               = new(12,graphic)
+plot_running_mean                      = new(12,graphic)
 
 
 if (plot_moc_time_series .eq. 1) then
@@ -438,18 +450,39 @@ if (plot_moc_time_series .eq. 1) then
     res_time_series@trYMaxF                        = max(STC_PAC)+(max(STC_PAC)-min(STC_PAC))*0.1
     res_time_series@tiMainString                   = "STC strength IndPac(max(10-30N)-min(10-30S) upper 250m)"
     plot_moc(6)                                    = gsn_csm_xy (wks,time_range,STC_PAC,res_time_series)
+    res_time_series@trYMinF                        = min(TC_PAC)-(max(TC_PAC)-min(TC_PAC))*0.1 
+    res_time_series@trYMaxF                        = max(TC_PAC)+(max(TC_PAC)-min(TC_PAC))*0.1
+    res_time_series@tiMainString                   = "TC strength IndPac(max(5S-5N)-min(5S-5N) upper 250m)"
+    plot_moc(9)                                    = gsn_csm_xy (wks,time_range,TC_PAC,res_time_series)
 
     if (plot_running_avg .eq. 1) then
-        res_time_series@xyLineThicknessF               = 4*(300/int2flt(length_time)) ; adapt line thickness to number of plotted time steps
+        if (4*line_thickness .ge. 4) then ; limit line thickness
+            res_time_series@xyLineThicknessF    =  6
+        else
+            res_time_series@xyLineThicknessF    =  4*line_thickness
+        end if
         plot_running_mean(0)                            = gsn_csm_xy (wks,time_range,runave(AMOC_26N,running_window,0),res_time_series)
         plot_running_mean(3)                            = gsn_csm_xy (wks,time_range,runave(AMOC_30S,running_window,0),res_time_series) 
         plot_running_mean(6)                            = gsn_csm_xy (wks,time_range,runave(STC_PAC,running_window,0),res_time_series)
-        
+        plot_running_mean(9)                            = gsn_csm_xy (wks,time_range,runave(TC_PAC,running_window,0),res_time_series)
+
         overlay(plot_moc(0),plot_running_mean(0))
         overlay(plot_moc(3),plot_running_mean(3))
         overlay(plot_moc(6),plot_running_mean(6))
+        overlay(plot_moc(9),plot_running_mean(9))
+
     end if
+      
+resP                                = True
+resP@gsnMaximize                    = True
+resP@txString                       = "KCM validation "+grid+" MOC"
+gsn_panel(wks,plot_moc,(/4,3/),resP) 
+
 end if
+  
+
+;*****************************************************************************************
+; PSI
 
 if (plot_psi_time_series .eq. 1) then
 res@tiMainString                  = "ACC"
@@ -460,6 +493,11 @@ res@tiMainString                  = "Indonesian Throughflow"
 res@trYMinF                        = min(IT)-(max(IT)-min(IT))*0.1      
 res@trYMaxF                        = max(IT)+(max(IT)-min(IT))*0.1
 plot(4)                            = gsn_csm_xy (wks,time_range,IT,res) 
+
+resP                                = True
+resP@gsnMaximize                    = True
+resP@txString                       = "KCM validation"
+gsn_panel(wks,plot_moc,(/3,3/),resP)  
 end if
 
 if (plot_bottom_time_series .eq. 1) then
@@ -481,12 +519,14 @@ res@tiYAxisString                  = "kg/m3"
 res@trYMinF                        = min(DSOW_sig)-(max(DSOW_sig)-min(DSOW_sig))*0.1  
 res@trYMaxF                        = max(DSOW_sig)+(max(DSOW_sig)-min(DSOW_sig))*0.1  
 plot(8)                            = gsn_csm_xy (wks,time_range,DSOW_sig,res) 
-end if
 
 resP                                = True
 resP@gsnMaximize                    = True
 resP@txString                       = "KCM validation"
-gsn_panel(wks,plot_moc,(/3,3/),resP)   
+gsn_panel(wks,plot_moc,(/3,3/),resP)  
+
+end if
+ 
 
 
 
