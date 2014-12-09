@@ -16,7 +16,9 @@
 
 ; specify directory
 dir = "/Users/ssteinig/Documents/Uni/Master/HiWi/KCM"
-delta_t="ym" ; ym or 1m
+delta_t="1m" ; ym or 1m
+plot_running_avg = 1
+running_avg_window = 1 ; number of years to include in the running mean
 exp_list=(/"P18","P19","P20","P21"/)
 var_list=(/"moc"/) ; moc, psi, mhst, bottom 
 ;exp_list=(/"P15","P16","P17"/)
@@ -53,31 +55,35 @@ begin
 ;*****************************************************************************************
 ; Set parameters
 ;*****************************************************************************************
+load "$NCARG_ROOT/lib/ncarg/nclscripts/contrib/time_axis_labels.ncl"
 
+; define which plots and data are needed based on the user selection of "var_list" 
 load_moc            =   0
 load_psi            =   0
 load_mhst           =   0
 load_bottom         =   0
 
-; define which plots and data are needed based on the user selection of "var_list" 
-plot_time_series    =   0
-plot_overturning    =   0
+plot_moc_time_series        =   0
+plot_psi_time_series        =   0
+plot_bottom_time_series     =   0
+plot_overturning            =   0
+
 do nn=0,dimsizes(var_list)-1
     if (var_list(nn) .eq. "moc") then
-      load_moc          =   1	
-      plot_time_series  =   1	
-      plot_overtuning   =   1			     
+      load_moc              =   1	
+      plot_moc_time_series  =   1	
+      plot_overtuning       =   1			     
     else if (var_list(nn) .eq. "psi") then
-      load_psi          =   1					            
-      plot_time_series  =   1
+      load_psi              =   1					            
+      plot_time_series      =   1
     end if
     end if
 end do   
 
 ; detect horizontal grid size
 do nn=0,dimsizes(exp_list)-1
-    f=systemfunc ("ls "+dir+"/data/"+exp_list(nn)+"/"+exp_list(nn)+"_"+delta_t+"*"+var_list(0)+"*.nc")
-    file_tmp=addfile(f,"r")
+    f=systemfunc ("ls "+dir+"/data/"+exp_list(nn)+"/"+exp_list(nn)+"_*"+var_list(0)+"*.nc")
+    file_tmp=addfile(f(0),"r")
     lat=file_tmp->nav_lat(:,0)
     if (nn .eq. 0) then ; set grid configuration based on number of latitude indices
         if (dimsizes(lat) .eq. 511) then
@@ -99,6 +105,13 @@ do nn=0,dimsizes(exp_list)-1
     end if
     delete([/f,file_tmp,lat/])
 end do
+
+if (grid .eq. "ORCA05") then
+    frequency="1m"
+else if (grid .eq. "ORCA2") then
+    frequency="ym"
+end if
+end if
     
 ;*****************************************************************************************
 ; Load data
@@ -107,7 +120,7 @@ end do
 ; detect length of time series for array initialisation
 model_years=new((/dimsizes(exp_list),2/),"integer")
 do nn=0,dimsizes(exp_list)-1
-    f=systemfunc ("ls "+dir+"/data/"+exp_list(nn)+"/"+exp_list(nn)+"_"+delta_t+"*"+var_list(0)+"*.nc")
+    f=systemfunc ("ls "+dir+"/data/"+exp_list(nn)+"/"+exp_list(nn)+"_"+frequency+"*"+var_list(0)+"*.nc")
     i1  = str_index_of_substr(f, var_list(0), 1)
     model_years(nn,0)=stringtointeger(substring(f,i1-10,i1-7))
     model_years(nn,1)=stringtointeger(substring(f,i1-5,i1-2))
@@ -119,13 +132,35 @@ last_year=dim_max(model_years(:,1))
 
 if (delta_t .eq. "ym") then		
     time_range=ispan(first_year,last_year,1)
-else					        
+    running_window=running_avg_window
+else if (delta_t .eq. "1m" .and. grid .eq. "ORCA05")			        
     time_range=ispan(first_year*12-11,last_year*12,1)
-end if   
+    running_window=running_avg_window*12
+else if (delta_t .eq. "1m" .and. grid .eq. "ORCA2")		
+    print("ERROR: No monthly mean data available for ORCA2 experiments")
+end if
+end if
+end if 
+
+length_time=dimsizes(time_range)
+
+; define available timesteps for each experiments on common time vector "time_range"
+model_timesteps=new((/dimsizes(exp_list),2/),"integer")
+do nn=0,dimsizes(exp_list)-1
+    if (delta_t .eq. "ym") then		
+        model_timesteps(nn,0)=model_years(nn,0)-first_year
+        model_timesteps(nn,1)=model_years(nn,1)-first_year
+    else if (delta_t .eq. "1m" .and. grid .eq. "ORCA05")			        
+        time_range=ispan(first_year*12-11,last_year*12,1)
+        model_timesteps(nn,0)=(model_years(nn,0)-first_year)*12
+        model_timesteps(nn,1)=(model_years(nn,1)-first_year)*12+11
+    end if
+    end if    
+end do
+ 
 
 ;*****************************************************************************************
 ; MOC
-;*****************************************************************************************
 
 if (load_moc .eq. 1) then
 
@@ -134,28 +169,20 @@ if (load_moc .eq. 1) then
     AMOC_30S=new((/dimsizes(exp_list),dimsizes(time_range)/),"float")
     TC_PAC=new((/dimsizes(exp_list),dimsizes(time_range)/),"float")
     STC_PAC=new((/dimsizes(exp_list),dimsizes(time_range)/),"float")
-
+    
     ; Define lat and depth indices for moc calculations
     ;
-    ; ORCA05
-    ;   AMOC 26.5°N: j=305
-    ;   AMOC 30°S: j=187
-    ;   TC: max (5S-5N, upper 250m) - min(5S-5N, upper 250m)
-    ;       TC_PAC: j=240:260, z=1:16
-    ;   STC: max (10N-30N, upper 250m) - min(30S-10S, upper 250m)
-    ;       STC_NPAC: j=270:313, z=1:16
-    ;       STC_SPAC: j=187:230, z=1:16
-    ;       STC_PAC: STC_NPAC - STC_SPAC
-    
-    ; ORCA2
-    ;   AMOC 26.5°N: j=95
-    ;   AMOC 30°S: j=50
-    ;   TC: max (5S-5N, upper 250m) - min(5S-5N, upper 250m)
-    ;       TC_PAC: j=65:83, z=1:18
-    ;   STC: max (10N-30N, upper 250m) - min(30S-10S, upper 250m)
-    ;       STC_NPAC: j=86:97, z=1:18
-    ;       STC_SPAC: j=50:61, z=1:18
-    ;       STC_PAC: STC_NPAC - STC_SPAC
+    ;                                          ; ORCA05             ; ORCA2
+    ; AMOC 26.5°N:                             ; j=305              ; j=95
+    ; AMOC 30°S:                               ; j=187              ; j=50
+    ; TC: max (5S-5N, upper 250m) -            ;                    ;
+    ;     min (5S-5N, upper 250m)              ;                    ;
+    ; TC_PAC:                                  ; j=240:260, z=1:16  ; j=65:83, z=1:18
+    ; STC: max (10N-30N, upper 250m) -         ;                    ; 
+    ;      min (30S-10S, upper 250m)           ;                    ; 
+    ; STC_NPAC:                                ; j=270:313, z=1:16  ; j=86:97, z=1:18
+    ; STC_SPAC:                                ; j=187:230, z=1:16  ; j=50:61, z=1:18
+    ; STC_PAC: STC_NPAC - STC_SPAC             ;                    ;
 
     ; NCL array indexing starts at 0!
     if (grid .eq. "ORCA05") then
@@ -180,30 +207,42 @@ if (load_moc .eq. 1) then
     end if
 
     do nn=0,dimsizes(exp_list)-1
-        f=systemfunc ("ls "+dir+"/data/"+exp_list(nn)+"/"+exp_list(nn)+"_"+delta_t+"*moc*.nc")
+        f=systemfunc ("ls "+dir+"/data/"+exp_list(nn)+"/"+exp_list(nn)+"_"+frequency+"*moc*.nc")
         file_tmp=addfile(f,"r")
-        moc_atl=file_tmp->zomsfatl(:,:,:,0)
-        moc_inp=file_tmp->zomsfinp(:,:,:,0)
+        moc_atl_tmp=file_tmp->zomsfatl(:,:,:,0)
+        moc_inp_tmp=file_tmp->zomsfinp(:,:,:,0)
         
-        AMOC_26N(nn,(model_years(nn,0)-first_year):(model_years(nn,1)-first_year))=dim_max_n(moc_atl(:,:,index_26N),1) 
-        AMOC_30S(nn,(model_years(nn,0)-first_year):(model_years(nn,1)-first_year))=dim_max_n(moc_atl(:,:,index_30S),1) 
+        if (grid .eq. "ORCA05" .and. delta_t .eq. "ym")
+            moc_atl=month_to_annual(moc_atl_tmp,1)
+            moc_inp=month_to_annual(moc_inp_tmp,1)
+        else
+            moc_atl=moc_atl_tmp
+            moc_inp=moc_inp_tmp
+        end if
+
+        AMOC_26N(nn,model_timesteps(nn,0):model_timesteps(nn,1))=dim_max_n(moc_atl(:,:,index_26N),1) 
+        AMOC_30S(nn,model_timesteps(nn,0):model_timesteps(nn,1))=dim_max_n(moc_atl(:,:,index_30S),1) 
         STC_NPAC=dim_max_n(moc_inp(:,0:index_depth_moc,index_10N:index_30N),1)
         STC_SPAC=dim_min_n(moc_inp(:,0:index_depth_moc,index_10S:index_30S),1)
-        STC_PAC(nn,(model_years(nn,0)-first_year):(model_years(nn,1)-first_year))=dim_max_n(STC_NPAC,1)-dim_min_n(STC_SPAC,1)
+        STC_PAC(nn,model_timesteps(nn,0):model_timesteps(nn,1))=dim_max_n(STC_NPAC,1)-dim_min_n(STC_SPAC,1)
                 
-    delete([/f,file_tmp,moc_atl,moc_inp,STC_NPAC,STC_SPAC/])
+    delete([/f,file_tmp,moc_atl,moc_atl_tmp,moc_inp,moc_inp_tmp,STC_NPAC,STC_SPAC/])
     end do
 
 end if
+
 ;*****************************************************************************************
 ; Transports
+
+if (load_psi .eq. 1) then
+
 
 ; create array and load in data
 ACC=new((/dimsizes(exp_list),dimsizes(time_range)/),"float")
 IT=new((/dimsizes(exp_list),dimsizes(time_range)/),"float")
 
 do nn=0,dimsizes(exp_list)-1
-    f=systemfunc ("ls "+dir+"/data/"+exp_list(nn)+"/"+exp_list(nn)+"_"+delta_t+"*psi*.nc")
+    f=systemfunc ("ls "+dir+"/data/"+exp_list(nn)+"/"+exp_list(nn)+"_"+frequency+"*psi*.nc")
     file_tmp=addfile(f,"r")
     psi_tmp=file_tmp->sobarstf
     psi=psi_tmp/1000000
@@ -264,8 +303,11 @@ do nn=0,dimsizes(exp_list)-1
     delete([/f,file_tmp,psi,psi_tmp,lat,lon,time_axis,time_new,years,yy,Drake_j1,Drake_j2,Drake_i1,Drake_i2,Ind_j1,Ind_j2,Ind_i1,Ind_i2/])
 end do
 
+end if
 ;*****************************************************************************************
 ; Overflow Water Masses
+
+if (load_bottom .eq. 1) then
 
 ; create array and load in data
 DSOW_T=new((/dimsizes(exp_list),dimsizes(time_range)/),"float")
@@ -273,7 +315,7 @@ DSOW_S=new((/dimsizes(exp_list),dimsizes(time_range)/),"float")
 DSOW_sig=new((/dimsizes(exp_list),dimsizes(time_range)/),"float")
 
 do nn=0,dimsizes(exp_list)-1
-    f=systemfunc ("ls "+dir+"/data/"+exp_list(nn)+"/"+exp_list(nn)+"_"+delta_t+"*bottom*.nc")
+    f=systemfunc ("ls "+dir+"/data/"+exp_list(nn)+"/"+exp_list(nn)+"_"+frequency+"*bottom*.nc")
     file_tmp=addfile(f,"r")
     temp=file_tmp->votemper
     sal=file_tmp->vosaline
@@ -329,59 +371,87 @@ do nn=0,dimsizes(exp_list)-1
     delete([/f,file_tmp,temp,sal,dens,lat,lon,time_axis,time_new,years,yy,DSOW_j1,DSOW_j2,DSOW_i1,DSOW_i2/])
 end do
 
+end if
 ;*****************************************************************************************
 ; Plots
 ;*****************************************************************************************
 
 colors=(/"black","dodgerblue4","firebrick4","olivedrab4","purple4","darkorange4","yellow","violetred4"/)
 
-res                                = True
-res@gsnDraw                        = False                         
-res@gsnFrame                       = False
+res_time_series                                = True
+res_time_series@gsnDraw                        = False                         
+res_time_series@gsnFrame                       = False
 
-res@xyDashPattern                  = 0
+res_time_series@xyDashPattern                  = 0
 
-res@trXMaxF                        = first_year 
-;res@trXMinF                        = 800      
-res@trXMaxF                        = last_year 
-res@xyLineThicknessF               = 4.0 
-res@tiYAxisString                  = "Sv"
-res@tiXAxisString                  = "Model Year"
-res@xyLineColors                    = colors
+res_time_series@trXMaxF                        = time_range(length_time-1) 
+res_time_series@trXMinF                        = time_range(0)     
+res_time_series@xyLineThicknessF               = 300/int2flt(length_time) ; adapt line thickness to number of plotted time steps
+res_time_series@tiYAxisString                  = "Sv"
+res_time_series@tiXAxisString                  = "Model Year"
+
+; format the x-axis (time axis)
+restick = True
+time_range!0="time"
+if (delta_t .eq. "1m") then
+    time_range@units="months since 0001-01-01"
+else
+    time_range@units="years since 0000-01-01"
+end if
+restick@ttmFormat = "%Y" ; 4 digit year
+time_axis_labels(time_range,res_time_series,restick)
+
+res_time_series@xyLineColors                    = colors
 
 ; Define Legend
-res@pmLegendDisplayMode    = "Always"            ; turn on legend
+res_time_series@pmLegendDisplayMode    = "Always"            ; turn on legend
 
-res@pmLegendSide           = "Top"               ; Change location of 
-res@pmLegendParallelPosF   = .8                 ; move units right
-res@pmLegendOrthogonalPosF = -0.45                ; move units down
+res_time_series@pmLegendSide           = "Top"               ; Change location of 
+res_time_series@pmLegendParallelPosF   = .8                 ; move units right
+res_time_series@pmLegendOrthogonalPosF = -0.45                ; move units down
 
-res@pmLegendWidthF         = 0.18               ; Change width and
-res@pmLegendHeightF        = 0.18                ; height of legend.
-res@lgLabelFontHeightF     = .03                 ; change font height
-res@lgTitleOn              = False                ; turn on legend title
-res@xyExplicitLegendLabels = " "+exp_list         ; explicit labels
-items                      = ispan(0,dimsizes(exp_list)-1,1)
-res@lgItemOrder            = items(::-1)              ; reverse legend
+res_time_series@pmLegendWidthF         = 0.18               ; Change width and
+res_time_series@pmLegendHeightF        = 0.18                ; height of legend.
+res_time_series@lgLabelFontHeightF     = .03                 ; change font height
+res_time_series@lgTitleOn              = False                ; turn on legend title
+res_time_series@xyExplicitLegendLabels = " "+exp_list         ; explicit labels
+legend_items                      = ispan(0,dimsizes(exp_list)-1,1)
+res_time_series@lgItemOrder            = legend_items(::-1)              ; reverse legend
 
-wks                                 = gsn_open_wks("pdf" ,dir+"/plots/KCM_validation_"+delta_t) 
+wks                                 = gsn_open_wks("pdf" ,dir+"/plots/KCM_validation_"+grid+"_"+delta_t) 
 ;wks                                 = gsn_open_wks("pdf" ,dir+"/plots/KCM_validation_orca05") 
 
-plot                               = new(9,graphic)
+plot_moc                               = new(9,graphic)
+plot_running_mean                      = new(9,graphic)
 
-res@trYMinF                        = min(AMOC_26N)-(max(AMOC_26N)-min(AMOC_26N))*0.1     
-res@trYMaxF                        = max(AMOC_26N)+(max(AMOC_26N)-min(AMOC_26N))*0.1  
-res@tiMainString                  = "AMOC 26.5N"
-plot(0)                            = gsn_csm_xy (wks,time_range,AMOC_26N,res)
-res@trYMinF                        = min(AMOC_30S)-(max(AMOC_30S)-min(AMOC_30S))*0.1 
-res@trYMaxF                        = max(AMOC_30S)+(max(AMOC_30S)-min(AMOC_30S))*0.1
-res@tiMainString                  = "AMOC 30S"
-plot(3)                            = gsn_csm_xy (wks,time_range,AMOC_30S,res) 
-res@trYMinF                        = min(STC_PAC)-(max(STC_PAC)-min(STC_PAC))*0.1 
-res@trYMaxF                        = max(STC_PAC)+(max(STC_PAC)-min(STC_PAC))*0.1
-res@tiMainString                  = "STC strength IndPac(max(10-30N)-min(10-30S) upper 250m)"
-plot(6)                            = gsn_csm_xy (wks,time_range,STC_PAC,res)
 
+if (plot_moc_time_series .eq. 1) then
+    res_time_series@trYMinF                        = min(AMOC_26N)-(max(AMOC_26N)-min(AMOC_26N))*0.1     
+    res_time_series@trYMaxF                        = max(AMOC_26N)+(max(AMOC_26N)-min(AMOC_26N))*0.1  
+    res_time_series@tiMainString                   = "AMOC 26.5N"
+    plot_moc(0)                                    = gsn_csm_xy (wks,time_range,AMOC_26N,res_time_series)
+    res_time_series@trYMinF                        = min(AMOC_30S)-(max(AMOC_30S)-min(AMOC_30S))*0.1 
+    res_time_series@trYMaxF                        = max(AMOC_30S)+(max(AMOC_30S)-min(AMOC_30S))*0.1
+    res_time_series@tiMainString                   = "AMOC 30S"
+    plot_moc(3)                                    = gsn_csm_xy (wks,time_range,AMOC_30S,res_time_series) 
+    res_time_series@trYMinF                        = min(STC_PAC)-(max(STC_PAC)-min(STC_PAC))*0.1 
+    res_time_series@trYMaxF                        = max(STC_PAC)+(max(STC_PAC)-min(STC_PAC))*0.1
+    res_time_series@tiMainString                   = "STC strength IndPac(max(10-30N)-min(10-30S) upper 250m)"
+    plot_moc(6)                                    = gsn_csm_xy (wks,time_range,STC_PAC,res_time_series)
+
+    if (plot_running_avg .eq. 1) then
+        res_time_series@xyLineThicknessF               = 4*(300/int2flt(length_time)) ; adapt line thickness to number of plotted time steps
+        plot_running_mean(0)                            = gsn_csm_xy (wks,time_range,runave(AMOC_26N,running_window,0),res_time_series)
+        plot_running_mean(3)                            = gsn_csm_xy (wks,time_range,runave(AMOC_30S,running_window,0),res_time_series) 
+        plot_running_mean(6)                            = gsn_csm_xy (wks,time_range,runave(STC_PAC,running_window,0),res_time_series)
+        
+        overlay(plot_moc(0),plot_running_mean(0))
+        overlay(plot_moc(3),plot_running_mean(3))
+        overlay(plot_moc(6),plot_running_mean(6))
+    end if
+end if
+
+if (plot_psi_time_series .eq. 1) then
 res@tiMainString                  = "ACC"
 res@trYMinF                        = min(ACC)-(max(ACC)-min(ACC))*0.1     
 res@trYMaxF                        = max(ACC)+(max(ACC)-min(ACC))*0.1 
@@ -390,7 +460,9 @@ res@tiMainString                  = "Indonesian Throughflow"
 res@trYMinF                        = min(IT)-(max(IT)-min(IT))*0.1      
 res@trYMaxF                        = max(IT)+(max(IT)-min(IT))*0.1
 plot(4)                            = gsn_csm_xy (wks,time_range,IT,res) 
+end if
 
+if (plot_bottom_time_series .eq. 1) then
 res@tiMainString                  = "DSOW Temperature"
 res@tiYAxisString                  = "~C~C"
 res@trYMinF                        = min(DSOW_T)-(max(DSOW_T)-min(DSOW_T))*0.1      
@@ -409,11 +481,12 @@ res@tiYAxisString                  = "kg/m3"
 res@trYMinF                        = min(DSOW_sig)-(max(DSOW_sig)-min(DSOW_sig))*0.1  
 res@trYMaxF                        = max(DSOW_sig)+(max(DSOW_sig)-min(DSOW_sig))*0.1  
 plot(8)                            = gsn_csm_xy (wks,time_range,DSOW_sig,res) 
+end if
 
 resP                                = True
 resP@gsnMaximize                    = True
 resP@txString                       = "KCM validation"
-gsn_panel(wks,plot,(/3,3/),resP)   
+gsn_panel(wks,plot_moc,(/3,3/),resP)   
 
 
 
