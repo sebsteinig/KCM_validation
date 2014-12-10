@@ -22,14 +22,14 @@ dir                     = "/Users/ssteinig/Documents/Uni/Master/HiWi/KCM"
 
 exp_list                = (/"P18","P19","P20","P21"/)
 ;exp_list               = (/"P15","P16","P17"/)
-reference_experiment    = "P21"
+reference_experiment    = "P18"
 var_list                = (/"moc"/)                     ; moc, psi, mhst, bottom 
 
-delta_t                 = "ym"                          ; ym or 1m
+delta_t                 = "1m"                          ; ym or 1m
 plot_running_avg        = 1                             ; 0=no, 1=yes
 running_avg_window      = 1                             ; number of years to include in the running mean
-plot_sub_period         = 0                             ; 0=no, 1=yes
-sub_period              = "13-49"
+plot_sub_period         = 1                             ; 0=no, 1=yes
+sub_period              = "10-49"
 
 ;*****************************************************************************************
 ; Define own functions
@@ -190,6 +190,15 @@ do nn=0,dimsizes(exp_list)-1
     end if
     end if    
 end do
+
+; check whether reference experiment has daza for chosen sub-period, otherwise exit
+if (plot_sub_period .eq. 1) then
+    if (model_timesteps(ref_exp,1) .le. period_start_index .or. model_timesteps(ref_exp,0) .ge. period_end_index) then
+    print("EROOR: Data for reference experiment does not include the chosen sub-period!")
+    exit
+    end if
+end if
+
 
 ;*****************************************************************************************
 ; MOC
@@ -462,7 +471,7 @@ end if
 ; Plots
 ;*****************************************************************************************
 
-; if subperiod is desired, cut the common time vector to chosen period 
+; if sub-period is desired, cut the common time vector to chosen period 
 if (plot_sub_period .eq. 1) then
     time_range_period=time_range(period_start_index:period_end_index)
     delete(time_range)
@@ -493,6 +502,7 @@ line_thickness                                 = 300.0/int2flt(length_time) ; ad
 if (line_thickness .ge. 4) then ; limit line thickness
     line_thickness = 4
 end if
+print(line_thickness)
 res_time_series@xyLineThicknessF               = line_thickness
 res_time_series@tiYAxisString                  = "Sv"
 res_time_series@tiXAxisString                  = "Model Year"
@@ -569,7 +579,7 @@ res_overturning_atl@trXMaxF                =  90
 res_overturning_inp@trXMinF                = -35       
 res_overturning_inp@trXMaxF                =  90
 res_overturning_stc@trXMinF                = -35 
-res_overturning_stc@trXMaxF                = 35 
+res_overturning_stc@trXMaxF                =  35 
 
 res_overturning_glo_diff=res_overturning_glo
 res_overturning_atl_diff=res_overturning_atl
@@ -639,8 +649,6 @@ if (plot_moc_time_series .eq. 1) then
     column=2
     page=0
     do nn=0,dimsizes(exp_list)-1
-    print(nn)
-
         if (nn .ne. ref_exp)
             res_overturning_glo_diff@tiMainString           = exp_list(nn)+" minus "+reference_experiment
             res_overturning_atl_diff@tiMainString           = exp_list(nn)+" minus "+reference_experiment
@@ -656,7 +664,7 @@ if (plot_moc_time_series .eq. 1) then
             nn=ref_exp
         end if
         
-        ; if third colum is used, draw the panel plot and advance to next page
+        ; if third column is used, draw the panel plot and advance to next page
         if (column .eq. 3 .or. nn .eq. dimsizes(exp_list)-1) then   
             resP                                = True
             resP@gsnMaximize                    = True
