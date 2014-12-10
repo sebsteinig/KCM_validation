@@ -9,6 +9,7 @@
 ;           1.0  :  Nov. 2014  :  annual mean time series         :  S. Steinig
 ;           1.1  :  Dez. 2014  :  added choice between ym and 1m  :  S. Steinig
 ;           1.2  :  Dez. 2014  :  added choice for sub period     :  S. Steinig
+;           1.3  :  Dez. 2014  :  added MOC sections              :  S. Steinig
 ;
 ;*****************************************************************************************
 
@@ -236,6 +237,8 @@ if (load_moc .eq. 1) then
         file_tmp=addfile(f,"r")
         moc_atl_tmp=file_tmp->zomsfatl(:,:,:,0)
         moc_inp_tmp=file_tmp->zomsfinp(:,:,:,0)
+        
+        printVarSummary(moc_atl_tmp)
                 
         if (grid .eq. "ORCA05" .and. delta_t .eq. "ym")
             moc_atl=month_to_annual(moc_atl_tmp,1)
