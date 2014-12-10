@@ -18,17 +18,18 @@
 ;*****************************************************************************************
 
 ; specify directory
-dir                 = "/Users/ssteinig/Documents/Uni/Master/HiWi/KCM"
+dir                     = "/Users/ssteinig/Documents/Uni/Master/HiWi/KCM"
 
-exp_list            = (/"P18","P19","P20","P21"/)
-;exp_list            = (/"P15","P16","P17"/)
-var_list            = (/"moc"/) ; moc, psi, mhst, bottom 
+exp_list                = (/"P18","P19","P20","P21"/)
+;exp_list               = (/"P15","P16","P17"/)
+reference_experiment    = "P21"
+var_list                = (/"moc"/)                     ; moc, psi, mhst, bottom 
 
-delta_t             = "1m" ; ym or 1m
-plot_running_avg    = 1 ; 0=no, 1=yes
-running_avg_window  = 1 ; number of years to include in the running mean
-plot_sub_period     = 0 ; 0=no, 1=yes
-sub_period          = "20-39"
+delta_t                 = "ym"                          ; ym or 1m
+plot_running_avg        = 1                             ; 0=no, 1=yes
+running_avg_window      = 1                             ; number of years to include in the running mean
+plot_sub_period         = 0                             ; 0=no, 1=yes
+sub_period              = "13-49"
 
 ;*****************************************************************************************
 ; Define own functions
@@ -79,7 +80,7 @@ do nn=0,dimsizes(var_list)-1
     if (var_list(nn) .eq. "moc") then
       load_moc              =   1	
       plot_moc_time_series  =   1	
-      plot_overtuning       =   1			     
+      plot_overturning       =   1			     
     else if (var_list(nn) .eq. "psi") then
       load_psi              =   1					            
       plot_time_series      =   1
@@ -95,8 +96,12 @@ do nn=0,dimsizes(exp_list)-1
     if (nn .eq. 0) then ; set grid configuration based on number of latitude indices
         if (dimsizes(lat) .eq. 511) then
             grid="ORCA05"
+            number_of_latitudes=dimsizes(lat)
+            number_of_depths=46
         else if (dimsizes(lat) .eq. 149) then
             grid="ORCA2"
+            number_of_latitudes=dimsizes(lat)
+            number_of_depths=31
         end if
         end if
     else ; check whether all following experiments have same grid, otherwise stop script with error
@@ -125,6 +130,9 @@ else if (grid .eq. "ORCA2") then
     frequency="ym"
 end if
 end if
+
+; find index of chosen reference experiment in exp_list
+ref_exp=str_match_ind(exp_list,reference_experiment)
 
     
 ;*****************************************************************************************
@@ -168,7 +176,6 @@ end if
 end if
 end if 
 
-length_time=dimsizes(time_range)
 
 ; define available timesteps for each experiment on common time vector "time_range"
 model_timesteps=new((/dimsizes(exp_list),2/),"integer")
@@ -183,19 +190,65 @@ do nn=0,dimsizes(exp_list)-1
     end if
     end if    
 end do
- 
 
 ;*****************************************************************************************
 ; MOC
 
 if (load_moc .eq. 1) then
 
-   ; create array and load in data
-    AMOC_26N_tmp=new((/dimsizes(exp_list),dimsizes(time_range)/),"float")
-    AMOC_30S_tmp=new((/dimsizes(exp_list),dimsizes(time_range)/),"float")
-    TC_PAC_tmp=new((/dimsizes(exp_list),dimsizes(time_range)/),"float")
-    STC_PAC_tmp=new((/dimsizes(exp_list),dimsizes(time_range)/),"float")
+   ; create array to put all experiments on the same time axis "time_range"
+    moc_glo_tmp=new((/dimsizes(exp_list),dimsizes(time_range),number_of_depths,number_of_latitudes/),"float")
+    moc_atl_tmp=new((/dimsizes(exp_list),dimsizes(time_range),number_of_depths,number_of_latitudes/),"float")
+    moc_inp_tmp=new((/dimsizes(exp_list),dimsizes(time_range),number_of_depths,number_of_latitudes/),"float")
     
+    do nn=0,dimsizes(exp_list)-1
+        f=systemfunc ("ls "+dir+"/data/"+exp_list(nn)+"/"+exp_list(nn)+"_"+frequency+"*moc*.nc")
+        file_tmp=addfile(f,"r")
+        
+        ; load model fields and put it at the time periods calculated in "model_timesteps"
+        moc_glo_all=file_tmp->zomsfglo(:,:,:,0)
+        moc_atl_all=file_tmp->zomsfatl(:,:,:,0)
+        moc_inp_all=file_tmp->zomsfinp(:,:,:,0)
+        moc_lat=file_tmp->nav_lat(:,0)
+        
+        if (grid .eq. "ORCA05") then ;correct lasts latitudes to have monotonically increasing lat vector
+            moc_lat(510)=90.0
+        else if (grid .eq. "ORCA2") then
+            moc_lat(147)=89.75 ;
+            moc_lat(148)=90.0
+        end if
+        end if
+        
+        moc_glo_all&y=moc_lat ; add latitude values to y-xis
+        moc_atl_all&y=moc_lat
+        moc_inp_all&y=moc_lat
+        
+        ; if needed calculate annual mean data  
+        if (grid .eq. "ORCA05" .and. delta_t .eq. "ym")
+            moc_glo_tmp(nn,model_timesteps(nn,0):model_timesteps(nn,1),:,:)=month_to_annual(moc_glo_all,1)
+            moc_atl_tmp(nn,model_timesteps(nn,0):model_timesteps(nn,1),:,:)=month_to_annual(moc_atl_all,1)
+            moc_inp_tmp(nn,model_timesteps(nn,0):model_timesteps(nn,1),:,:)=month_to_annual(moc_inp_all,1)
+        else
+            moc_glo_tmp(nn,model_timesteps(nn,0):model_timesteps(nn,1),:,:)=moc_glo_all
+            moc_atl_tmp(nn,model_timesteps(nn,0):model_timesteps(nn,1),:,:)=moc_atl_all
+            moc_inp_tmp(nn,model_timesteps(nn,0):model_timesteps(nn,1),:,:)=moc_inp_all
+        end if
+                                        
+        delete([/f,file_tmp,moc_glo_all,moc_atl_all,moc_inp_all,moc_lat/])
+    end do
+    
+    if (plot_sub_period .eq. 1) then
+        moc_glo=moc_glo_tmp(:,period_start_index:period_end_index,:,:)
+        moc_atl=moc_atl_tmp(:,period_start_index:period_end_index,:,:)
+        moc_inp=moc_inp_tmp(:,period_start_index:period_end_index,:,:)
+    else
+        moc_glo=moc_glo_tmp
+        moc_atl=moc_atl_tmp
+        moc_inp=moc_inp_tmp
+    end if
+    
+    delete([/moc_glo_tmp,moc_inp_tmp,moc_atl_tmp/])
+
     ; Define lat and depth indices for moc calculations
     ;
     ;                                          ; ORCA05             ; ORCA2
@@ -232,34 +285,36 @@ if (load_moc .eq. 1) then
     end if          
     end if
 
+    ; calculate desired moc quantities based on the i,j,k indices above
+    AMOC_26N=dim_max_n(moc_atl(:,:,:,index_26N),2) 
+    AMOC_30S=dim_max_n(moc_atl(:,:,:,index_30S),2) 
+    TC_max=dim_max_n(moc_inp(:,:,0:index_depth_moc,index_5N:index_5S),2)
+    TC_min=dim_min_n(moc_inp(:,:,0:index_depth_moc,index_5N:index_5S),2)
+    TC_PAC=dim_max_n(TC_max,2)-dim_min_n(TC_min,2)        
+    STC_NPAC=dim_max_n(moc_inp(:,:,0:index_depth_moc,index_10N:index_30N),2)
+    STC_SPAC=dim_min_n(moc_inp(:,:,0:index_depth_moc,index_10S:index_30S),2)
+    STC_PAC=dim_max_n(STC_NPAC,2)-dim_min_n(STC_SPAC,2)
+    
+    ; calculate mean sections
+    MOC_glo=dim_avg_n_Wrap(moc_glo(:,:,:,:),1)
+    MOC_atl=dim_avg_n_Wrap(moc_atl(:,:,:,:),1)
+    MOC_inp=dim_avg_n_Wrap(moc_inp(:,:,:,:),1)
+    
+    ; calculate differences relative to chosen reference experiment
+    MOC_glo_diff=new((dimsizes(MOC_glo)),"float")
+    MOC_atl_diff=new((dimsizes(MOC_atl)),"float")
+    MOC_inp_diff=new((dimsizes(MOC_inp)),"float")
+    
+    copy_VarMeta(MOC_glo,MOC_glo_diff)
+    copy_VarMeta(MOC_atl,MOC_atl_diff)
+    copy_VarMeta(MOC_inp,MOC_inp_diff)
+    
     do nn=0,dimsizes(exp_list)-1
-        f=systemfunc ("ls "+dir+"/data/"+exp_list(nn)+"/"+exp_list(nn)+"_"+frequency+"*moc*.nc")
-        file_tmp=addfile(f,"r")
-        moc_atl_tmp=file_tmp->zomsfatl(:,:,:,0)
-        moc_inp_tmp=file_tmp->zomsfinp(:,:,:,0)
-        
-        printVarSummary(moc_atl_tmp)
-                
-        if (grid .eq. "ORCA05" .and. delta_t .eq. "ym")
-            moc_atl=month_to_annual(moc_atl_tmp,1)
-            moc_inp=month_to_annual(moc_inp_tmp,1)
-        else
-            moc_atl=moc_atl_tmp
-            moc_inp=moc_inp_tmp
-        end if
-
-        AMOC_26N_tmp(nn,model_timesteps(nn,0):model_timesteps(nn,1))=dim_max_n(moc_atl(:,:,index_26N),1) 
-        AMOC_30S_tmp(nn,model_timesteps(nn,0):model_timesteps(nn,1))=dim_max_n(moc_atl(:,:,index_30S),1) 
-        TC_max=dim_max_n(moc_inp(:,0:index_depth_moc,index_5N:index_5S),1)
-        TC_min=dim_min_n(moc_inp(:,0:index_depth_moc,index_5N:index_5S),1)
-        TC_PAC_tmp(nn,model_timesteps(nn,0):model_timesteps(nn,1))=dim_max_n(TC_max,1)-dim_min_n(TC_min,1)        
-        STC_NPAC=dim_max_n(moc_inp(:,0:index_depth_moc,index_10N:index_30N),1)
-        STC_SPAC=dim_min_n(moc_inp(:,0:index_depth_moc,index_10S:index_30S),1)
-        STC_PAC_tmp(nn,model_timesteps(nn,0):model_timesteps(nn,1))=dim_max_n(STC_NPAC,1)-dim_min_n(STC_SPAC,1)
-                
-    delete([/f,file_tmp,moc_atl,moc_atl_tmp,moc_inp,moc_inp_tmp,STC_NPAC,STC_SPAC,TC_max,TC_min/])
-    end do
-
+        MOC_glo_diff(nn,:,:)=MOC_glo(nn,:,:)-MOC_glo(ref_exp,:,:)
+        MOC_atl_diff(nn,:,:)=MOC_atl(nn,:,:)-MOC_atl(ref_exp,:,:)
+        MOC_inp_diff(nn,:,:)=MOC_inp(nn,:,:)-MOC_inp(ref_exp,:,:)
+    end do    
+    
 end if
 
 ;*****************************************************************************************
@@ -407,34 +462,53 @@ end if
 ; Plots
 ;*****************************************************************************************
 
+; if subperiod is desired, cut the common time vector to chosen period 
+if (plot_sub_period .eq. 1) then
+    time_range_period=time_range(period_start_index:period_end_index)
+    delete(time_range)
+    time_range=time_range_period
+    first_plotted_year=period_start
+    last_plotted_year=period_end
+else
+    first_plotted_year=first_year
+    last_plotted_year=last_year
+end if
+
+length_time=dimsizes(time_range)
+
 ;*****************************************************************************************
 ; MOC
 
+; define plot resoures
 colors=(/"black","dodgerblue4","firebrick4","olivedrab4","purple4","darkorange4","yellow","violetred4"/)
 
 res_time_series                                = True
 res_time_series@gsnDraw                        = False                         
 res_time_series@gsnFrame                       = False
-
 res_time_series@xyDashPattern                  = 0
-
-if (plot_sub_period .eq. 1) then ; adapt plotted time range to the one specified in "sub_period"
-    res_time_series@trXMaxF                        = time_range(period_end_index) 
-    res_time_series@trXMinF                        = time_range(period_start_index)
-    timesteps_for_plot                             = time_range(period_end_index)-time_range(period_start_index)
-else
-    res_time_series@trXMaxF                        = time_range(length_time-1) 
-    res_time_series@trXMinF                        = time_range(0) 
-    timesteps_for_plot                             = time_range(length_time-1)-time_range(0)
-end if
- 
-line_thickness                                 = 300.0/int2flt(timesteps_for_plot) ; adapt line thickness to number of plotted time steps
+res_time_series@trXMinF                        = time_range(0) 
+res_time_series@trXMaxF                        = time_range(length_time-1)
+res_time_series@xyLineColors                    = colors
+line_thickness                                 = 300.0/int2flt(length_time) ; adapt line thickness to number of plotted time steps
 if (line_thickness .ge. 4) then ; limit line thickness
     line_thickness = 4
 end if
 res_time_series@xyLineThicknessF               = line_thickness
 res_time_series@tiYAxisString                  = "Sv"
 res_time_series@tiXAxisString                  = "Model Year"
+
+; Define Legend
+res_time_series@pmLegendDisplayMode    = "Always"            ; turn on legend
+res_time_series@pmLegendSide           = "Top"               ; Change location of 
+res_time_series@pmLegendParallelPosF   = .8                  ; move units right
+res_time_series@pmLegendOrthogonalPosF = -0.45               ; move units down
+res_time_series@pmLegendWidthF         = 0.18                ; Change width and
+res_time_series@pmLegendHeightF        = 0.18                ; height of legend.
+res_time_series@lgLabelFontHeightF     = .03                 ; change font height
+res_time_series@lgTitleOn              = False               ; turn on legend title
+res_time_series@xyExplicitLegendLabels = " "+exp_list        ; explicit labels
+legend_items                           = ispan(0,dimsizes(exp_list)-1,1)
+res_time_series@lgItemOrder            = legend_items(::-1)  ; reverse legend
 
 ; format the x-axis (time axis)
 restick = True
@@ -447,30 +521,79 @@ end if
 restick@ttmFormat = "%Y" ; 4 digit year
 time_axis_labels(time_range,res_time_series,restick)
 
-res_time_series@xyLineColors                    = colors
+res_overturning                                = True
+res_overturning@gsnDraw                        = False                         
+res_overturning@gsnFrame                       = False
+res_overturning@cnFillOn                       = True             
+res_overturning@cnLevelSelectionMode           = "ExplicitLevels"
+res_overturning@tiMainString                   = exp_list(ref_exp)
+res_overturning@gsnContourNegLineDashPattern   = 1
+res_overturning@cnLineLabelsOn                 = True
+res_overturning@cnLineLabelPlacementMode       = "computed"
+res_overturning@cnFillPalette                  = "BlueDarkRed18"
+res_overturning@gsnYAxisIrregular2Linear       = True
+res_overturning@gsnXAxisIrregular2Linear       = True
+res_overturning@tiMainString                   = reference_experiment+" (reference)"
+res_overturning@gsnRightString                 = "Sv"
+res_overturning@lbOrientation                  = "vertical" 
+res_overturning@tiYAxisString                  = ""
 
-; Define Legend
-res_time_series@pmLegendDisplayMode    = "Always"            ; turn on legend
+; calculate contour intervals
+contour_intervals_glo=(/floattointeger(min(MOC_glo(ref_exp,:,:))),floattointeger(max(MOC_glo(ref_exp,:,:)))/)
+contour_intervals_atl=(/floattointeger(min(MOC_atl(ref_exp,:,{-35:90}))),floattointeger(max(MOC_atl(ref_exp,:,{-35:90})))/)
+contour_intervals_inp=(/floattointeger(min(MOC_inp(ref_exp,:,{-35:90}))),floattointeger(max(MOC_inp(ref_exp,:,{-35:90})))/)
+contour_intervals_stc=(/floattointeger(min(MOC_inp(ref_exp,0:index_depth_moc,{-30:30}))),floattointeger(max(MOC_inp(ref_exp,0:index_depth_moc,{-30:30})))/)
 
-res_time_series@pmLegendSide           = "Top"               ; Change location of 
-res_time_series@pmLegendParallelPosF   = .8                 ; move units right
-res_time_series@pmLegendOrthogonalPosF = -0.45                ; move units down
+contour_limit_glo=max(abs(contour_intervals_glo))
+contour_limit_atl=max(abs(contour_intervals_atl))
+contour_limit_inp=max(abs(contour_intervals_inp))
+contour_limit_stc=max(abs(contour_intervals_stc))
 
-res_time_series@pmLegendWidthF         = 0.18               ; Change width and
-res_time_series@pmLegendHeightF        = 0.18                ; height of legend.
-res_time_series@lgLabelFontHeightF     = .03                 ; change font height
-res_time_series@lgTitleOn              = False                ; turn on legend title
-res_time_series@xyExplicitLegendLabels = " "+exp_list         ; explicit labels
-legend_items                      = ispan(0,dimsizes(exp_list)-1,1)
-res_time_series@lgItemOrder            = legend_items(::-1)              ; reverse legend
+contour_interval_glo=2*contour_limit_glo/20
+contour_interval_atl=2*contour_limit_atl/20
+contour_interval_inp=2*contour_limit_inp/20
+contour_interval_stc=2*contour_limit_stc/20
 
-wks                                 = gsn_open_wks("pdf" ,dir+"/plots/KCM_validation_"+grid+"_"+delta_t) 
-;wks                                 = gsn_open_wks("pdf" ,dir+"/plots/KCM_validation_orca05") 
+res_overturning_glo=res_overturning
+res_overturning_atl=res_overturning
+res_overturning_inp=res_overturning
+res_overturning_stc=res_overturning
+
+res_overturning_glo@gsnLeftString           = "Global"
+res_overturning_atl@gsnLeftString           = "Atlantic"
+res_overturning_inp@gsnLeftString           = "Indo-Pacific"
+res_overturning_stc@gsnLeftString           = "STC"
+
+res_overturning_atl@trXMinF                = -35       
+res_overturning_atl@trXMaxF                =  90 
+res_overturning_inp@trXMinF                = -35       
+res_overturning_inp@trXMaxF                =  90
+res_overturning_stc@trXMinF                = -35 
+res_overturning_stc@trXMaxF                = 35 
+
+res_overturning_glo_diff=res_overturning_glo
+res_overturning_atl_diff=res_overturning_atl
+res_overturning_inp_diff=res_overturning_inp
+res_overturning_stc_diff=res_overturning_stc
+
+res_overturning_glo@cnLevels               = ispan(-1*contour_limit_glo,contour_limit_glo,contour_interval_glo)
+res_overturning_atl@cnLevels               = ispan(-1*contour_limit_atl,contour_limit_atl,contour_interval_atl)
+res_overturning_inp@cnLevels               = ispan(-1*contour_limit_inp,contour_limit_inp,contour_interval_inp)
+res_overturning_stc@cnLevels               = ispan(-1*contour_limit_stc,contour_limit_stc,contour_interval_stc)
+
+res_overturning_glo_diff@cnLevels               = ispan(-50,50,5)/10.0
+res_overturning_atl_diff@cnLevels               = ispan(-50,50,5)/10.0
+res_overturning_inp_diff@cnLevels               = ispan(-50,50,5)/10.0
+res_overturning_stc_diff@cnLevels               = ispan(-50,50,5)/10.0
+
+
+                                                         
+wks                                 = gsn_open_wks("pdf" ,dir+"/plots/KCM_validation_moc_"+grid+"_"+delta_t+"_"+sprintf("%04.0f",first_plotted_year)+"-"+sprintf("%04.0f",last_plotted_year)) 
 
 plot_moc                               = new(12,graphic)
 plot_running_mean                      = new(12,graphic)
 
-
+; plot time series
 if (plot_moc_time_series .eq. 1) then
     res_time_series@trYMinF                        = min(AMOC_26N)-(max(AMOC_26N)-min(AMOC_26N))*0.1     
     res_time_series@trYMaxF                        = max(AMOC_26N)+(max(AMOC_26N)-min(AMOC_26N))*0.1  
@@ -482,11 +605,11 @@ if (plot_moc_time_series .eq. 1) then
     plot_moc(3)                                    = gsn_csm_xy (wks,time_range,AMOC_30S,res_time_series) 
     res_time_series@trYMinF                        = min(STC_PAC)-(max(STC_PAC)-min(STC_PAC))*0.1 
     res_time_series@trYMaxF                        = max(STC_PAC)+(max(STC_PAC)-min(STC_PAC))*0.1
-    res_time_series@tiMainString                   = "STC strength IndPac(max(10-30N)-min(10-30S) upper 250m)"
+    res_time_series@tiMainString                   = "STC strength IndPac"
     plot_moc(6)                                    = gsn_csm_xy (wks,time_range,STC_PAC,res_time_series)
     res_time_series@trYMinF                        = min(TC_PAC)-(max(TC_PAC)-min(TC_PAC))*0.1 
     res_time_series@trYMaxF                        = max(TC_PAC)+(max(TC_PAC)-min(TC_PAC))*0.1
-    res_time_series@tiMainString                   = "TC strength IndPac(max(5S-5N)-min(5S-5N) upper 250m)"
+    res_time_series@tiMainString                   = "TC strength IndPac"
     plot_moc(9)                                    = gsn_csm_xy (wks,time_range,TC_PAC,res_time_series)
 
     if (plot_running_avg .eq. 1) then
@@ -504,14 +627,50 @@ if (plot_moc_time_series .eq. 1) then
         overlay(plot_moc(3),plot_running_mean(3))
         overlay(plot_moc(6),plot_running_mean(6))
         overlay(plot_moc(9),plot_running_mean(9))
-
     end if
-      
-resP                                = True
-resP@gsnMaximize                    = True
-resP@txString                       = "KCM validation "+grid+" MOC"
-gsn_panel(wks,plot_moc,(/4,3/),resP) 
 
+    ; plot sections of reference experiment
+    plot_moc(1)                            = gsn_csm_contour(wks,MOC_glo(ref_exp,:,:),res_overturning_glo)
+    plot_moc(4)                            = gsn_csm_contour(wks,MOC_atl(ref_exp,:,:),res_overturning_atl)
+    plot_moc(7)                            = gsn_csm_contour(wks,MOC_inp(ref_exp,:,:),res_overturning_inp)
+    plot_moc(10)                           = gsn_csm_contour(wks,MOC_inp(ref_exp,0:index_depth_moc,:),res_overturning_stc)
+
+    ; plot sections of differences  
+    column=2
+    page=0
+    do nn=0,dimsizes(exp_list)-1
+    print(nn)
+
+        if (nn .ne. ref_exp)
+            res_overturning_glo_diff@tiMainString           = exp_list(nn)+" minus "+reference_experiment
+            res_overturning_atl_diff@tiMainString           = exp_list(nn)+" minus "+reference_experiment
+            res_overturning_inp_diff@tiMainString           = exp_list(nn)+" minus "+reference_experiment
+            res_overturning_stc_diff@tiMainString           = exp_list(nn)+" minus "+reference_experiment
+
+            plot_moc(column)                            = gsn_csm_contour(wks,MOC_glo_diff(nn,:,:),res_overturning_glo_diff)
+            plot_moc(column+3)                          = gsn_csm_contour(wks,MOC_atl_diff(nn,:,:),res_overturning_atl_diff)
+            plot_moc(column+6)                          = gsn_csm_contour(wks,MOC_inp_diff(nn,:,:),res_overturning_inp_diff)
+            plot_moc(column+9)                          = gsn_csm_contour(wks,MOC_inp_diff(nn,0:index_depth_moc,:),res_overturning_stc_diff)
+            column=column+1
+        else
+            nn=ref_exp
+        end if
+        
+        ; if third colum is used, draw the panel plot and advance to next page
+        if (column .eq. 3 .or. nn .eq. dimsizes(exp_list)-1) then   
+            resP                                = True
+            resP@gsnMaximize                    = True
+            resP@txString                       = grid+" MOC"+" "+delta_t+" "+sprintf("%04.0f",first_plotted_year)+"-"+sprintf("%04.0f",last_plotted_year)
+            if (page .eq. 0) then
+                resP@gsnPanelXWhiteSpacePercent     = 10
+            else
+                resP@gsnPanelXWhiteSpacePercent     = 1
+            end if
+            gsn_panel(wks,plot_moc,(/4,3/),resP) 
+            page=page+1
+            column=0
+        end if          
+    end do
 end if
   
 
