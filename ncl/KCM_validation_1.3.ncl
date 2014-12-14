@@ -2,7 +2,9 @@
 ;                                       KCM Validation
 ;*****************************************************************************************
 ;
-; Calculate and plot basic transport quantities for KCM ORCA2 and ORCA05 experiments
+; Calculate and plot basic transport quantities for KCM ORCA2 and ORCA05 experiments. The
+; script expects the data in sub-folders for each experiment (e.g. dir/data/P18/P18_1m_00
+; 02-0019.moc.nc) like it is created by the "run_cdftools.1.0.sh" script.
 ;
 ; 
 ; History:      
@@ -20,15 +22,16 @@
 ; specify directory
 dir                     = "/Users/ssteinig/Documents/Uni/Master/HiWi/KCM"
 
-exp_list                = (/"P18","P19","P20","P21"/)
+;exp_list                = (/"P18","P19","P20","P21","P22"/)
+exp_list                = (/"P18"/)
 ;exp_list               = (/"P15","P16","P17"/)
 reference_experiment    = "P18"
-var_list                = (/"moc"/)                     ; moc, psi, mhst, bottom 
+var_list                = (/"psi"/)                     ; moc, psi, mhst, bottom 
 
-delta_t                 = "1m"                          ; ym or 1m
+delta_t                 = "ym"                          ; ym or 1m
 plot_running_avg        = 1                             ; 0=no, 1=yes
-running_avg_window      = 1                             ; number of years to include in the running mean
-plot_sub_period         = 1                             ; 0=no, 1=yes
+running_avg_window      = 5                             ; number of years to include in the running mean
+plot_sub_period         = 0                             ; 0=no, 1=yes
 sub_period              = "10-49"
 
 ;*****************************************************************************************
@@ -80,7 +83,7 @@ do nn=0,dimsizes(var_list)-1
     if (var_list(nn) .eq. "moc") then
       load_moc              =   1	
       plot_moc_time_series  =   1	
-      plot_overturning       =   1			     
+      plot_overturning      =   1			     
     else if (var_list(nn) .eq. "psi") then
       load_psi              =   1					            
       plot_time_series      =   1
@@ -97,10 +100,12 @@ do nn=0,dimsizes(exp_list)-1
         if (dimsizes(lat) .eq. 511) then
             grid="ORCA05"
             number_of_latitudes=dimsizes(lat)
+            number_of_longitudes=722
             number_of_depths=46
         else if (dimsizes(lat) .eq. 149) then
             grid="ORCA2"
             number_of_latitudes=dimsizes(lat)
+            number_of_longitudes=182
             number_of_depths=31
         end if
         end if
@@ -327,9 +332,69 @@ if (load_moc .eq. 1) then
 end if
 
 ;*****************************************************************************************
-; Transports
+; PSI
 
 if (load_psi .eq. 1) then
+
+   ; create array to put all experiments on the same time axis "time_range"
+    psi_tmp=new((/dimsizes(exp_list),dimsizes(time_range),number_of_latitudes,number_of_longitudes/),"float")
+    
+    do nn=0,dimsizes(exp_list)-1
+        f=systemfunc ("ls "+dir+"/data/"+exp_list(nn)+"/"+exp_list(nn)+"_"+frequency+"*psi*.nc")
+        file_tmp=addfile(f,"r")
+        sobarstf_tmp=file_tmp->sobarstf
+        psi=sobarstf_tmp/1000000
+        copy_VarMeta(sobarstf_tmp,psi)
+        
+        ; load model fields and put it at the time periods calculated in "model_timesteps"
+        psi_lat=file_tmp->nav_lat(:,0)
+        psi_lon=file_tmp->nav_lon(0,:)
+
+        
+        if (grid .eq. "ORCA05") then ;correct lasts latitudes to have monotonically increasing lat vector
+            psi_lat(510)=90.0
+        else if (grid .eq. "ORCA2") then
+            psi_lat(147)=89.75 ;
+            psi_lat(148)=90.0
+        end if
+        end if
+        
+        psi!0="time"
+        psi!1="lat"
+        psi!2="lon"
+        printVarSummary(psi)
+        
+        psi&lat=psi_lat ; add latitude values to y-xis
+        psi&lon=psi_lon ; add latitude values to y-xis
+        
+        ; if needed calculate annual mean data  
+        if (grid .eq. "ORCA05" .and. delta_t .eq. "ym")
+            psi_tmp(nn,model_timesteps(nn,0):model_timesteps(nn,1),:,:)=month_to_annual(psi,1)
+        else
+            psi_tmp(nn,model_timesteps(nn,0):model_timesteps(nn,1),:,:)=psi
+        end if
+                                        
+        delete([/f,file_tmp,psi,psi_lat,sobarstf_tmp/])
+    end do
+    
+    if (plot_sub_period .eq. 1) then
+        PSI=psi_tmp(:,period_start_index:period_end_index,:,:)
+    else
+        PSI=psi_tmp
+    end if
+    
+    delete([/psi_tmp/])
+    
+    printVarSummary(PSI)
+    
+end if
+
+
+
+;*****************************************************************************************
+; Transports
+
+if (load_psi_3 .eq. 1) then
 
 
 ; create array and load in data
@@ -623,11 +688,13 @@ if (plot_moc_time_series .eq. 1) then
     plot_moc(9)                                    = gsn_csm_xy (wks,time_range,TC_PAC,res_time_series)
 
     if (plot_running_avg .eq. 1) then
-        if (4*line_thickness .ge. 4) then ; limit line thickness
-            res_time_series@xyLineThicknessF    =  6
-        else
+        
+        if (line_thickness .le. 1) then
             res_time_series@xyLineThicknessF    =  4*line_thickness
+        else
+            res_time_series@xyLineThicknessF    =  2*line_thickness
         end if
+
         plot_running_mean(0)                            = gsn_csm_xy (wks,time_range,runave(AMOC_26N,running_window,0),res_time_series)
         plot_running_mean(3)                            = gsn_csm_xy (wks,time_range,runave(AMOC_30S,running_window,0),res_time_series) 
         plot_running_mean(6)                            = gsn_csm_xy (wks,time_range,runave(STC_PAC,running_window,0),res_time_series)
