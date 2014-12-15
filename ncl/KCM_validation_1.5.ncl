@@ -20,17 +20,17 @@
 ;*****************************************************************************************
 ; User input
 ;*****************************************************************************************
-
+begTime = get_cpu_time()
 ; specify directory
 dir                     = "/Users/ssteinig/Documents/Uni/Master/HiWi/KCM"
 
-;exp_list                = (/"P18"/)
-exp_list                = (/"P18","P19","P20","P21","P22"/)
+exp_list                = (/"P18","P20"/)
+;exp_list                = (/"P18","P19","P20","P21","P22"/)
 ;exp_list               = (/"P15","P16","P17"/)
 reference_experiment    = "P18"
 var_list                = (/"psi"/)                     ; moc, psi, mhst, bottom 
 
-delta_t                 = "1m"                          ; ym or 1m
+delta_t                 = "ym"                          ; ym or 1m
 plot_running_avg        = 1                             ; 0=no, 1=yes
 running_avg_window      = 1                             ; number of years to include in the running mean
 plot_sub_period         = 0                             ; 0=no, 1=yes
@@ -198,7 +198,7 @@ do nn=0,dimsizes(exp_list)-1
     end if    
 end do
 
-; check whether reference experiment has daza for chosen sub-period, otherwise exit
+; check whether reference experiment has data for chosen sub-period, otherwise exit
 if (plot_sub_period .eq. 1) then
     if (model_timesteps(ref_exp,1) .le. period_start_index .or. model_timesteps(ref_exp,0) .ge. period_end_index) then
     print("EROOR: Data for reference experiment does not include the chosen sub-period!")
@@ -339,202 +339,110 @@ end if
 if (load_psi .eq. 1) then
 
    ; create array to put all experiments on the same time axis "time_range"
-    psi_tmp=new((/dimsizes(exp_list),dimsizes(time_range),number_of_latitudes,number_of_longitudes/),"float")
-    
+    PSI=new((/dimsizes(exp_list),dimsizes(time_range),number_of_latitudes,number_of_longitudes/),"float")
+
     do nn=0,dimsizes(exp_list)-1
-    print(nn)
+    print("loading "+exp_list(nn)+" data")
         f=systemfunc ("ls "+dir+"/data/"+exp_list(nn)+"/"+exp_list(nn)+"_"+frequency+"*psi*.nc")
         file_tmp=addfile(f,"r")
-        delete([/f/])
-        sobarstf_tmp=file_tmp->sobarstf
-                delete([/file_tmp/])
-        sobarstf_tmp@_FillValue = 9999
-        psi=sobarstf_tmp/1000000
-
-        copy_VarMeta(sobarstf_tmp,psi)
-                             delete([/sobarstf_tmp/])
-
-                    print("0")
-
-        ;psi_lat=file_tmp->nav_lat
-        ;psi_lon=file_tmp->nav_lon
-  
+        psi=file_tmp->sobarstf
+        psi@_FillValue = 9999
+        psi=psi/1000000
+        psi_lat=file_tmp->nav_lat
+        psi_lon=file_tmp->nav_lon
+        delete([/f,file_tmp/])
+          
         ; if needed calculate annual mean data  
         if (grid .eq. "ORCA05" .and. delta_t .eq. "ym")
-            psi_tmp(nn,model_timesteps(nn,0):model_timesteps(nn,1),:,:)=month_to_annual(psi,1)
+            PSI(nn,model_timesteps(nn,0):model_timesteps(nn,1),:,:)=month_to_annual(psi,1)
         else
-            psi_tmp(nn,model_timesteps(nn,0):model_timesteps(nn,1),:,:)=psi
-        end if
-                                        
+            PSI(nn,model_timesteps(nn,0):model_timesteps(nn,1),:,:)=psi
+        end if                                      
         delete([/psi/])
     end do
     
     if (plot_sub_period .eq. 1) then
-        PSI=psi_tmp(:,period_start_index:period_end_index,:,:)
-    else
-        PSI=psi_tmp
+        PSI:=PSI(:,period_start_index:period_end_index,:,:)
     end if
+
+    dims_psi=dimsizes(PSI)
+    ; calculate transports, PSI dimensions are: model x time x lat x lon
+    transports=(/"ACC","BER","BAR","DAV","FRA","SPG","GSG","KOR","SOY","KUR"/)
+    transport_indices=new((/dimsizes(transports),4/),"integer")
+    TRANSPORTS=new((/dimsizes(transports),dims_psi(0),dims_psi(1)/),"float")
+        
     
     ; Define lat and lon indices for transport calculations
     ;
-    ;                                          ; ORCA05             ; ORCA2
-    ; ACC (+eastward)                          ; j=305              ; (i=112,j=24)-(i=108,j=34)
-    ; BER (+northward)                         ; j=187              ; (i=57,j=124)-(i=55,j=124)
-    ; BAR (+northward)                          ;                   ; (i=145,j=131)-(i=140,j=137)
-    ; DAV (+northward)                          ;                   ; (i=119,j=143)-(i=117,j=143)
-    ; FRA (+northward)                         ; j=240:260, z=1:16  ; (i=140,j=137)-(i=133,j=137)
-    ; SPG (-stronger gyre)                      ;                   ; min(i=115:135,j=108:115)
-    ; GSG (-stronger gyre)                   ;                      ; min(i=132:145,j=124:132)
-    ; KOR (+northward)                         ; j=270:313, z=1:16  ; (i=27,j=100)-(i=26,j=101)
-    ; SOY (+northward)                         ; j=187:230, z=1:16  ; (i=31,j=104)-(i=32,j=105)
-    ; KUR (+northward)                           ;                  ; (i=26,j=95)-(i=20,j=95)
+    ;                       ; ORCA05                        ; ORCA2
+    ; ACC (+eastward)       ; (i=448,j=80)-(i=440,j=120)    ; (i=112,j=24)-(i=108,j=34)
+    ; BER (+northward)      ; (i=232,j=418)-(i=227,j=418)   ; (i=57,j=124)-(i=55,j=124)
+    ; BAR (+northward)      ; (i=591,j=451)-(i=562,j=467)   ; (i=145,j=131)-(i=140,j=137)
+    ; DAV (+northward)      ; (i=484,j=427)-(i=466,j=429)   ; (i=119,j=143)-(i=117,j=143)
+    ; FRA (+northward)      ; (i=557,j=471)-(i=532,j=471)   ; (i=140,j=137)-(i=133,j=137)
+    ; SPG (-stronger gyre)  ; min(i=474:553,j=357:391)      ; min(i=115:135,j=108:115)
+    ; GSG (-stronger gyre)  ; min(i=532:584,j=424:462)      ; min(i=132:145,j=124:132)
+    ; KOR (+northward)      ; (i=118,j=321)-(i=111,j=327)   ; (i=27,j=100)-(i=26,j=101)
+    ; SOY (+northward)      ; (i=141,j=352)-(i=141,j=356)     ; (i=31,j=104)-(i=32,j=105)
+    ; KUR (+northward)      ; (i=120,j=312)-(i=98,j=312)  ; (i=26,j=95)-(i=20,j=95)
 
     ; NCL array indexing starts at 0!
     if (grid .eq. "ORCA05") then
-        ACC_index             = (/439,119,447,79/) 
+        transport_indices(0,:) = (/447,79,439,119/)
+        transport_indices(1,:) = (/231,417,226,417/) 
+        transport_indices(2,:) = (/590,450,561,466/) 
+        transport_indices(3,:) = (/483,426,465,428/) 
+        transport_indices(4,:) = (/556,470,531,470/) 
+        transport_indices(5,:) = (/473,552,356,390/) 
+        transport_indices(6,:) = (/531,583,423,461/) 
+        transport_indices(7,:) = (/117,320,110,326/) 
+        transport_indices(8,:) = (/140,351,140,355/) 
+        transport_indices(9,:) = (/119,311,97,311/)  
     else if (grid .eq. "ORCA2") then    
-        ACC_index             = (/111,23,107,33/) 
-        BER_index             = (/56,123,54,123/) 
-        BAR_index             = (/144,130,139,136/) 
-        DAV_index             = (/118,142,116,143/) 
-        FRA_index             = (/139,137,132,136/) 
-        SPG_index             = (/114,134,107,114/) 
-        GSG_index             = (/131,144,123,131/) 
-        KOR_index             = (/26,99,25,100/) 
-        SOY_index             = (/30,103,31,104/) 
-        KUR_index             = (/25,94,20,94/) 
+        transport_indices(0,:) = (/111,23,107,33/) 
+        transport_indices(1,:) = (/56,123,54,123/) 
+        transport_indices(2,:) = (/144,130,139,136/) 
+        transport_indices(3,:) = (/118,142,116,143/) 
+        transport_indices(4,:) = (/139,137,132,136/) 
+        transport_indices(5,:) = (/114,134,107,114/) 
+        transport_indices(6,:) = (/131,144,123,131/) 
+        transport_indices(7,:) = (/26,99,25,100/) 
+        transport_indices(8,:) = (/30,103,31,104/) 
+        transport_indices(9,:) = (/25,94,20,94/) 
     end if          
     end if
-       
-       print("1")
-    ; calculate transports, PSI dimensions are: model x time x lat x lon
-    transports=(/"ACC"/)
-    TRANSPORTS=new((/dimsizes(transports),dimsizes(exp_list),dimsizes(time_range)/),"float")
     
-    TRANSPORTS(0,:,:)=-1*(PSI(:,:,ACC_index(1),ACC_index(0))-PSI(:,:,ACC_index(3),ACC_index(2)))
-    ;TRANSPORTS(1,:,:)=PSI(:,:,BER_index(1),BER_index(0))-PSI(:,:,BER_index(3),BER_index(2))
-    ;TRANSPORTS(2,:,:)=PSI(:,:,BAR_index(1),BAR_index(0))-PSI(:,:,BAR_index(3),BAR_index(2))
-    ;TRANSPORTS(3,:,:)=PSI(:,:,DAV_index(1),DAV_index(0))-PSI(:,:,DAV_index(3),DAV_index(2))
-    ;TRANSPORTS(4,:,:)=PSI(:,:,FRA_index(1),FRA_index(0))-PSI(:,:,FRA_index(3),FRA_index(2))
-    ;TRANSPORTS(5,:,:)=dim_min_n(dim_min_n(PSI(:,:,SPG_index(0):SPG_index(1),SPG_index(2):SPG_index(3)),2),2)
-    ;TRANSPORTS(6,:,:)=dim_min_n(dim_min_n(PSI(:,:,GSG_index(0):GSG_index(1),GSG_index(2):GSG_index(3)),2),2)
-    ;TRANSPORTS(7,:,:)=PSI(:,:,KOR_index(1),KOR_index(0))-PSI(:,:,KOR_index(3),KOR_index(2))
-    ;TRANSPORTS(8,:,:)=PSI(:,:,SOY_index(1),SOY_index(0))-PSI(:,:,SOY_index(3),SOY_index(2))
-    ;TRANSPORTS(9,:,:)=PSI(:,:,KUR_index(1),KUR_index(0))-PSI(:,:,KUR_index(3),KUR_index(2))
+    
+    TRANSPORTS(0,:,:)=PSI(:,:,transport_indices(0,1),transport_indices(0,0))-PSI(:,:,transport_indices(0,3),transport_indices(0,2))
+    TRANSPORTS(1,:,:)=PSI(:,:,transport_indices(1,1),transport_indices(1,0))-PSI(:,:,transport_indices(1,3),transport_indices(1,2))
+    TRANSPORTS(2,:,:)=PSI(:,:,transport_indices(2,1),transport_indices(2,0))-PSI(:,:,transport_indices(2,3),transport_indices(2,2))
+    TRANSPORTS(3,:,:)=PSI(:,:,transport_indices(3,1),transport_indices(3,0))-PSI(:,:,transport_indices(3,3),transport_indices(3,2))
+    TRANSPORTS(4,:,:)=PSI(:,:,transport_indices(4,1),transport_indices(4,0))-PSI(:,:,transport_indices(4,3),transport_indices(4,2))
+    TRANSPORTS(5,:,:)=dim_min_n(dim_min_n(PSI(:,:,transport_indices(5,2):transport_indices(5,3),transport_indices(5,0):transport_indices(5,1)),2),2)
+    TRANSPORTS(6,:,:)=dim_min_n(dim_min_n(PSI(:,:,transport_indices(6,2):transport_indices(6,3),transport_indices(6,0):transport_indices(6,1)),2),2)
+    TRANSPORTS(7,:,:)=PSI(:,:,transport_indices(7,1),transport_indices(7,0))-PSI(:,:,transport_indices(7,3),transport_indices(7,2))
+    TRANSPORTS(8,:,:)=PSI(:,:,transport_indices(8,1),transport_indices(8,0))-PSI(:,:,transport_indices(8,3),transport_indices(8,2))
+    TRANSPORTS(9,:,:)=PSI(:,:,transport_indices(9,1),transport_indices(9,0))-PSI(:,:,transport_indices(9,3),transport_indices(9,2))
 
-    ;PSI_mean=dim_avg_n_Wrap(PSI(:,:,:,:),1)
-    
-    ; calculate differences relative to chosen reference experiment
-    ;PSI_diff=new((dimsizes(PSI_mean)),"float")
-    
-    ;copy_VarMeta(PSI_mean,PSI_diff)
-    
-    ;do nn=0,dimsizes(exp_list)-1
-        ;PSI_diff(nn,:,:)=PSI_mean(nn,:,:)-PSI_mean(ref_exp,:,:)
-    ;end do    
+    ; calculate spatial differences of mean fields relative to chosen reference experiment
+    print("Calculating spatial differences in psi")
 
-       print("2")
-    delete([/psi_tmp,PSI/])
+    PSI_mean_ref=new((/dimsizes(exp_list),number_of_latitudes,number_of_longitudes/),"float")
+    PSI_diff=new((/dimsizes(exp_list),number_of_latitudes,number_of_longitudes/),"float")
+
+    PSI_mean_ref(0,:,:)=dim_avg_n_Wrap(PSI(ref_exp,:,:,:),0)      
+    copy_VarMeta(PSI_mean_ref,PSI_diff)
+    
+    do nn=0,dimsizes(exp_list)-1
+        if (nn .ne. ref_exp) then
+            print("averaging "+exp_list(nn)+" field")
+            PSI_diff(nn,:,:)=dim_avg_n_Wrap(PSI(nn,:,:,:),0)-PSI_mean_ref(0,:,:)
+        end if
+    end do    
+    delete([/PSI/])
         
 end if
 
-
-
-;*****************************************************************************************
-; Transports
-
-    ; Coordinates from Rafael:
-        ; Drake Pass.:  (j=120,i=440)-(j=80,i=448)  ->  (54.2°S,67.5°W)-(64.1°S,63°W)
-        ; Indonesian:   (j=205,i=85)-(j=233,i=85)   ->  (21.7°S,115°E)-(8.2S°,115°E)
-        ; Denmark:      (j=416,i=528)-(j=425,i=523) ->  (48°N,25.5°W)-(48.4°N,26°W)
-        ; Iceland:      (j=412,i=578)-(j=412,j=523) ->  (47.8°N,1.5°E)-(47.8°N,26°W)
-        ; Bering Str.:  (j=418,i=232)-(j=418,i=227) ->  (48.1°N,171.5°W)-(48.1°N,-174°W)
-        
-        ; 
-            
-;    Drake_j1=closest_val_AnyOrder(-54.2,lat) ;find indices closest to chosen coordinates
-;    Drake_j2=closest_val_AnyOrder(-64.1,lat)
-;    Drake_i1=closest_val_AnyOrder(-67.5,lon)
-;    Drake_i2=closest_val_AnyOrder(-63,lon)
-    
-;    Ind_j1=closest_val_AnyOrder(-21.7,lat)
-;    Ind_j2=closest_val_AnyOrder(-8.2,lat)
-;    Ind_i1=closest_val_AnyOrder(115,lon)
-;    Ind_i2=closest_val_AnyOrder(115,lon)
-
-    ;calculate transports between the two points
- ;   ACC(nn,years(0)-2:years(0+yy-1)-2)=psi(:,Drake_j2,Drake_i2)-psi(:,Drake_j1,Drake_i1)
- ;   IT(nn,years(0)-2:years(0+yy-1)-2)=psi(:,Ind_j2,Ind_i2)-psi(:,Ind_j1,Ind_i1)
- ;  delete([/f,file_tmp,psi,psi_tmp,lat,lon,time_axis,time_new,years,yy,Drake_j1,Drake_j2,Drake_i1,Drake_i2,Ind_j1,Ind_j2,Ind_i1,Ind_i2/])
-
-;*****************************************************************************************
-; Overflow Water Masses
-
-if (load_bottom .eq. 1) then
-
-; create array and load in data
-DSOW_T=new((/dimsizes(exp_list),dimsizes(time_range)/),"float")
-DSOW_S=new((/dimsizes(exp_list),dimsizes(time_range)/),"float")
-DSOW_sig=new((/dimsizes(exp_list),dimsizes(time_range)/),"float")
-
-do nn=0,dimsizes(exp_list)-1
-    f=systemfunc ("ls "+dir+"/data/"+exp_list(nn)+"/"+exp_list(nn)+"_"+frequency+"*bottom*.nc")
-    file_tmp=addfile(f,"r")
-    temp=file_tmp->votemper
-    sal=file_tmp->vosaline
-    dens=file_tmp->sobotsig0
-
-    ; get time information
-    if ( isfilevarcoord( file_tmp, "time_counter", "time_counter") .eq. True ) then
-        time_axis=file_tmp->time_counter
-        time_axis!0="time"
-    else
-        time_axis=file_tmp->time
-    end if   
-    time_new=cd_calendar(time_axis,-5)
-    if (exp_list(nn) .eq. "P15") then
-        years=ispan(800,886,1)
-    else if (exp_list(nn) .eq. "P16") then
-        years=ispan(800,1005,1)
-    else if (exp_list(nn) .eq. "P17") then
-        years=ispan(800,999,1)
-    else
-        years=time_new(:,0)
-    end if
-    end if 
-    end if
-    yy=dimsizes(years)
-    
-    ;attach lat-lon coordinates
-    lat=file_tmp->nav_lat(:,0)
-    lon=file_tmp->nav_lon(0,:)
-    temp!1="latitude"
-    temp!2="longitude"
-    temp!0="time"
-    sal!0="time"
-    dens!0="time"
-
-
-    temp&latitude=lat
-    temp&longitude=lon
-    
-    ; Coordinates from Rafael:
-        ; DSOW:  (j=414:419)-(i=519:524)  ->  (47.9-48.1°N)-(28.3:25.8°W)
-
-    DSOW_j1=closest_val_AnyOrder(47.9,lat) ;find indices closest to chosen coordinates
-    DSOW_j2=closest_val_AnyOrder(48.1,lat)
-    DSOW_i1=closest_val_AnyOrder(-28.3,lon)
-    DSOW_i2=closest_val_AnyOrder(-25.8,lon)
-    
-    ;calculate properties of DSOW
-    DSOW_T(nn,years(0)-2:years(0+yy-1)-2)=dim_avg_n_Wrap(temp(:,DSOW_j1:DSOW_j2,DSOW_i1:DSOW_i2),(/1,2/))
-    DSOW_S(nn,years(0)-2:years(0+yy-1)-2)=dim_avg_n_Wrap(sal(:,DSOW_j1:DSOW_j2,DSOW_i1:DSOW_i2),(/1,2/))
-    DSOW_sig(nn,years(0)-2:years(0+yy-1)-2)=dim_avg_n_Wrap(dens(:,DSOW_j1:DSOW_j2,DSOW_i1:DSOW_i2),(/1,2/))
-    
-    delete([/f,file_tmp,temp,sal,dens,lat,lon,time_axis,time_new,years,yy,DSOW_j1,DSOW_j2,DSOW_i1,DSOW_i2/])
-end do
-
-end if
 ;*****************************************************************************************
 ; Plots
 ;*****************************************************************************************
@@ -758,8 +666,16 @@ end if
 
 if (plot_psi .eq. 1) then
 
+print("start plotting time series")
     res_psi_time_series                     = res_moc_time_series
-
+    
+    res_polymarker                            = True
+    res_polymarker@gsMarkerIndex = 5            ; choose circle as polymarker
+    res_polymarker@gsLineThicknessF = 3.0           ; select size to avoid streaking
+    res_polymarker@gsLineColor = "green"
+    res_polymarker@sfXArray              =  psi_lon                ;-- longitude grid cell center
+    res_polymarker@sfYArray              =  psi_lat                ;-- latitude grid cell center
+    
     res_psi                                 = True 
     res_psi@gsnDraw                         = False                         
     res_psi@gsnFrame                        = False   
@@ -778,8 +694,8 @@ if (plot_psi .eq. 1) then
     res_psi@cnLineLabelPlacementMode        = "computed"
     res_psi@cnLineLabelBackgroundColor      = "white"
     res_psi@mpFillOn                        = True
-    ;res_psi@sfXArray              =  psi_lon                ;-- longitude grid cell center
-    ;res_psi@sfYArray              =  psi_lat                ;-- latitude grid cell center
+    res_psi@sfXArray              =  psi_lon                ;-- longitude grid cell center
+    res_psi@sfYArray              =  psi_lat                ;-- latitude grid cell center
     res_psi@gsnAddCyclic          =  False                ; don't add lon cyclic point
     
     res_psi_diff                  = res_psi
@@ -788,15 +704,14 @@ if (plot_psi .eq. 1) then
     res_psi_diff@cnLinesOn                       = False             
     res_psi_diff@cnLineLabelsOn                  = False  
 
-
-
     wks                                 = gsn_open_wks("pdf" ,dir+"/plots/KCM_validation_psi_"+grid+"_"+delta_t+"_"+sprintf("%04.0f",first_plotted_year)+"-"+sprintf("%04.0f",last_plotted_year)) 
 
-    plot_transports                                   = new(1,graphic)
-    plot_transports_running_mean                      = new(1,graphic)
-    
-    plot_psi_2d                                   = new(3,graphic)
-    
+    plot_transports                                   = new(dimsizes(transports),graphic)
+    plot_transports_running_mean                      = new(dimsizes(transports),graphic)
+    grid_points                                   = new(number_of_longitudes*number_of_latitudes,graphic)
+    plot_psi_2d                                   = new(dimsizes(exp_list),graphic)
+
+
     do nn=0,dimsizes(transports)-1
         line_thickness                                 = 300.0/int2flt(length_time) ; adapt line thickness to number of plotted time steps
         if (line_thickness .ge. 4) then ; limit line thickness
@@ -825,61 +740,36 @@ if (plot_psi .eq. 1) then
     resP@gsnMaximize                    = True
     resP@txString                       = grid+" psi"+" "+delta_t+" "+sprintf("%04.0f",first_plotted_year)+"-"+sprintf("%04.0f",last_plotted_year)
     resP@gsnPanelXWhiteSpacePercent     = 10
-    gsn_panel(wks,plot_transports ,(/1,1/),resP) 
-    
+    gsn_panel(wks,plot_transports,(/4,3/),resP)
+  
+  print("start plotting 2d fields")
     row=1
     do nn=0,dimsizes(exp_list)-1
         if (nn .eq. ref_exp) then
             res_psi@tiMainString                    = reference_experiment+" (reference)"
-            plot_psi_2d (0)                             = gsn_csm_contour_map(wks,PSI_mean(nn,:,:),res_psi)
+            plot_psi_2d(0)                          = gsn_csm_contour_map(wks,PSI_mean_ref(0,:,:),res_psi)
+            do tt=0,dimsizes(transports)-1
+                if (tt .ne. 5 .and. tt .ne. 6) then
+                    grid_points(tt)                          = gsn_add_polyline(wks,plot_psi_2d(0),(/psi_lon(transport_indices(tt,1),transport_indices(tt,0)),psi_lon(transport_indices(tt,3),transport_indices(tt,2))/),(/psi_lat(transport_indices(tt,1),transport_indices(tt,0)),psi_lat(transport_indices(tt,3),transport_indices(tt,2))/),res_polymarker)
+                end if
+            end do
         else
-            res_psi_diff@tiMainString                    = exp_list(nn)+" minus "+reference_experiment
-            plot_psi_2d (row)                             = gsn_csm_contour_map(wks,PSI_diff(nn,:,:),res_psi_diff)
+            res_psi_diff@tiMainString               = exp_list(nn)+" minus "+reference_experiment
+            plot_psi_2d(row)                       = gsn_csm_contour_map(wks,PSI_diff(nn,:,:),res_psi_diff)
             row=row+1
         end if
     end do
     
-        
+    number_of_rows=dimsizes(exp_list)/3+1       
     resP                                = True
     resP@gsnMaximize                    = True
     resP@txString                       = grid+" psi"+" "+delta_t+" "+sprintf("%04.0f",first_plotted_year)+"-"+sprintf("%04.0f",last_plotted_year)
     resP@gsnPanelXWhiteSpacePercent     = 10
-    gsn_panel(wks,plot_psi_2d ,(/3,1/),resP) 
+    gsn_panel(wks,plot_psi_2d ,(/3,number_of_rows/),resP) 
+
+    print("Calculated script in " + (get_cpu_time() - begTime) + " seconds") 
 
 end if
-
-;*****************************************************************************************
-; Bottom
-
-
-if (plot_bottom_time_series .eq. 1) then
-res@tiMainString                  = "DSOW Temperature"
-res@tiYAxisString                  = "~C~C"
-res@trYMinF                        = min(DSOW_T)-(max(DSOW_T)-min(DSOW_T))*0.1      
-res@trYMaxF                        = max(DSOW_T)+(max(DSOW_T)-min(DSOW_T))*0.1      
-plot(2)                            = gsn_csm_xy (wks,time_range,DSOW_T,res) 
-res@tiMainString                  = "DSOW Salinity"
-res@tiYAxisString                  = ""
-res@trYMinF                        = min(DSOW_S)-(max(DSOW_S)-min(DSOW_S))*0.1     
-res@trYMaxF                        = max(DSOW_S)+(max(DSOW_S)-min(DSOW_S))*0.1    
-plot(5)                            = gsn_csm_xy (wks,time_range,DSOW_S,res) 
-resP                                = True
-resP@gsnMaximize                    = True
-resP@txString                       = ""
-res@tiMainString                  = "DSOW Density (sig0)"
-res@tiYAxisString                  = "kg/m3"
-res@trYMinF                        = min(DSOW_sig)-(max(DSOW_sig)-min(DSOW_sig))*0.1  
-res@trYMaxF                        = max(DSOW_sig)+(max(DSOW_sig)-min(DSOW_sig))*0.1  
-plot(8)                            = gsn_csm_xy (wks,time_range,DSOW_sig,res) 
-
-resP                                = True
-resP@gsnMaximize                    = True
-resP@txString                       = "KCM validation"
-gsn_panel(wks,plot_moc,(/3,3/),resP)  
-
-end if
- 
-
 
 
 end
